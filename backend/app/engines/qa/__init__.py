@@ -1,0 +1,1 @@
+﻿"""Functional QA execution (Playwright, API test runners) and result capture."""

@@ -1,0 +1,27 @@
+{
+  "name": "ai-qa-security-engine-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-router-dom": "^7.1.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.13",
+    "@types/node": "^22.10.1",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "tailwindcss": "^4.1.13",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.7"
+  }
+}

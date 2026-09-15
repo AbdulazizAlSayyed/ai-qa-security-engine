@@ -1,0 +1,25 @@
+@import "tailwindcss";
+
+@theme {
+  --font-mono: ui-monospace, "Cascadia Code", Consolas, "Courier New", monospace;
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background-color: var(--color-slate-950);
+    color: var(--color-slate-200);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  *:focus-visible {
+    outline: 2px solid var(--color-sky-400);
+    outline-offset: 2px;
+  }
+}

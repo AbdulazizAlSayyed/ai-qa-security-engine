@@ -1,0 +1,1 @@
+﻿"""Evidence-grounded AI analysis and the provider abstraction."""

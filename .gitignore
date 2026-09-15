@@ -1,0 +1,62 @@
+# --- Secrets ---------------------------------------------------------
+.env
+.env.local
+*.env
+!.env.example
+
+# --- Python ----------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- Backend runtime artefacts ---------------------------------------
+backend/.qa-workspace/
+# Local wheel cache, kept so the backend can be reinstalled offline.
+backend/.wheels/
+# Process logs from local runs
+.pip.log
+.pip.err
+.pip.pid
+.dl.log
+.dl.err
+.npm.log
+.npm.err
+.vite.log
+.vite.err
+.vite.pid
+.uvicorn.log
+.uvicorn.err
+.uvicorn.pid
+
+# --- Node / frontend -------------------------------------------------
+node_modules/
+dist/
+dist-ssr/
+.vite/
+*.local
+npm-debug.log*
+yarn-error.log*
+
+# --- Tool output -----------------------------------------------------
+# Generated evidence and scan output. Keep the folders, not the results.
+reports/*
+!reports/.gitkeep
+integrations/**/output/
+playwright-report/
+test-results/
+.zap/
+
+# --- Editors / OS ----------------------------------------------------
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
