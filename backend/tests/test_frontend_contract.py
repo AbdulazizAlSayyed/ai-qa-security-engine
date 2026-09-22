@@ -31,6 +31,18 @@ from app.schemas.correlation import (
     CorrelationSummary,
 )
 from app.schemas.issue import IssueAIFinding, IssueResponse, ScoreFactor
+from app.schemas.target import (
+    AuthenticationProfile,
+    SecurityPolicy,
+    TargetCreate,
+    TargetDeleteResponse,
+    TargetResponse,
+)
+from app.schemas.test_account import (
+    TestAccountCreate,
+    TestAccountDeleteResponse,
+    TestAccountResponse,
+)
 
 FRONTEND_TYPES = Path(__file__).resolve().parents[2] / "frontend" / "src" / "types"
 
@@ -147,3 +159,55 @@ def test_report_types_match_the_api(interface: str, model) -> None:
 def test_assessment_type_matches_the_api() -> None:
     source = (FRONTEND_TYPES / "assessment.ts").read_text(encoding="utf-8")
     assert interface_fields(source, "Assessment") == set(AssessmentResponse.model_fields)
+
+
+@pytest.mark.parametrize(
+    ("interface", "model"),
+    [
+        ("AuthenticationProfile", AuthenticationProfile),
+        ("SecurityPolicy", SecurityPolicy),
+        ("Target", TargetResponse),
+        ("TargetCreate", TargetCreate),
+        ("TargetDeleteResult", TargetDeleteResponse),
+    ],
+)
+def test_target_profile_types_match_the_api(interface: str, model) -> None:
+    """Phase 12 added two nested blocks to the target, which is exactly the
+    shape of change that renders as ``undefined`` in the UI when one side
+    drifts."""
+    source = (FRONTEND_TYPES / "target.ts").read_text(encoding="utf-8")
+    assert interface_fields(source, interface) == set(model.model_fields)
+
+
+@pytest.mark.parametrize(
+    ("interface", "model"),
+    [
+        ("TestAccount", TestAccountResponse),
+        ("TestAccountCreate", TestAccountCreate),
+        ("TestAccountDeleteResult", TestAccountDeleteResponse),
+    ],
+)
+def test_test_account_types_match_the_api(interface: str, model) -> None:
+    source = (FRONTEND_TYPES / "testAccount.ts").read_text(encoding="utf-8")
+    assert interface_fields(source, interface) == set(model.model_fields)
+
+
+def test_no_frontend_type_declares_a_credential_field() -> None:
+    """The browser is never given a place to hold a secret.
+
+    A field named password/secret/token on any of these interfaces would mean
+    the API had started returning one, which is the failure this whole design
+    is built to prevent.
+
+    Only interface bodies are inspected. The enum label maps in the same
+    files legitimately contain keys like ``cookie`` (a place a target keeps
+    its token), and those are display strings, not fields carrying a value.
+    """
+    forbidden = {"password", "secret", "token", "cookie"}
+    for filename in ("target.ts", "testAccount.ts"):
+        source = (FRONTEND_TYPES / filename).read_text(encoding="utf-8")
+        interfaces = re.findall(r"export interface (\w+) \{", source)
+        assert interfaces, f"{filename} declares no interfaces"
+        for interface in interfaces:
+            leaked = interface_fields(source, interface) & forbidden
+            assert not leaked, f"{filename}::{interface} declares {sorted(leaked)}"

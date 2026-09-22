@@ -11,8 +11,10 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from typing import Any
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pymongo.errors import PyMongoError
@@ -29,6 +31,7 @@ from app.api.routes import reports as report_routes
 from app.api.routes import retests as retest_routes
 from app.api.routes import security as security_routes
 from app.api.routes import targets as target_routes
+from app.api.routes import test_accounts as test_account_routes
 from app.core.config import get_settings
 from app.core.database import close_mongo_connection, connect_to_mongo, get_database
 from app.core.logging import configure_logging, get_logger
@@ -43,6 +46,7 @@ from app.models.report import ensure_indexes as ensure_report_indexes
 from app.models.retest import ensure_indexes as ensure_retest_indexes
 from app.models.security_run import ensure_indexes as ensure_security_indexes
 from app.models.target import ensure_indexes as ensure_target_indexes
+from app.models.test_account import ensure_indexes as ensure_test_account_indexes
 from app.services.ai_analysis_service import (
     AIAnalysisFailedError,
     AIAnalysisPersistenceError,
@@ -102,7 +106,14 @@ from app.services.security_service import (
 from app.services.target_service import (
     DuplicateTargetError,
     InvalidTargetIdError,
+    InvalidTargetProfileError,
+    TargetHasTestAccountsError,
     TargetNotFoundError,
+)
+from app.services.test_account_service import (
+    DuplicateTestAccountError,
+    InvalidTestAccountIdError,
+    TestAccountNotFoundError,
 )
 
 configure_logging()
@@ -141,6 +152,7 @@ async def lifespan(app: FastAPI):
     try:
         database = get_database()
         await ensure_target_indexes(database)
+        await ensure_test_account_indexes(database)
         await ensure_qa_indexes(database)
         await ensure_security_indexes(database)
         await ensure_assessment_indexes(database)
@@ -152,8 +164,8 @@ async def lifespan(app: FastAPI):
         await ensure_retest_indexes(database)
         await ensure_report_indexes(database)
         logger.info(
-            "Target, QA, security, assessment, evidence, AI analysis, correlation group, "
-            "issue, recommendation, retest and report indexes ensured"
+            "Target, test account, QA, security, assessment, evidence, AI analysis, "
+            "correlation group, issue, recommendation, retest and report indexes ensured"
         )
     except PyMongoError as exc:
         logger.warning("Could not ensure indexes (is MongoDB running?): %s", exc)
@@ -184,6 +196,7 @@ app.add_middleware(
 
 app.include_router(health_routes.router)
 app.include_router(target_routes.router)
+app.include_router(test_account_routes.router)
 app.include_router(qa_routes.router)
 app.include_router(security_routes.router)
 app.include_router(assessment_routes.router)
@@ -206,6 +219,48 @@ def _problem(status_code: int, message: str) -> JSONResponse:
     return JSONResponse(status_code=status_code, content={"detail": message})
 
 
+#: Field names whose value is a credential. A validation error about one of
+#: these must not quote what was sent.
+_CREDENTIAL_FIELD_NAMES = frozenset(
+    {"password", "passwd", "secret", "token", "cookie", "credential", "api_key", "apikey"}
+)
+_REDACTED = "<redacted>"
+
+
+@app.exception_handler(RequestValidationError)
+async def _handle_validation_error(_: Request, exc: RequestValidationError):
+    """FastAPI's 422, with credential values stripped out of it.
+
+    The default handler echoes the rejected input back so a caller can see
+    what was wrong with it. That is genuinely useful, and wrong for exactly
+    one case: a password sent to a field that refuses passwords would be
+    quoted verbatim in the error body.
+
+    Rejecting the request is not enough on its own, because the platform
+    promises a credential never appears in a response. So the value is
+    replaced wherever the field it belongs to is credential-shaped, and left
+    alone everywhere else - a rejected URL or enum still says what it got.
+    """
+    errors: list[dict[str, Any]] = []
+    for error in exc.errors():
+        item = dict(error)
+        location = [str(part).lower() for part in item.get("loc", ())]
+        message = str(item.get("msg", "")).lower()
+        # Either the field is one that holds a credential, or the validator
+        # said the value looked like one - a password pasted into a notes
+        # field is still a password.
+        credential_shaped = any(
+            part in _CREDENTIAL_FIELD_NAMES for part in location
+        ) or any(word in message for word in ("credential", "password"))
+        if "input" in item and credential_shaped:
+            item["input"] = _REDACTED
+        # Pydantic can attach the original exception, which may repeat the value.
+        item.pop("ctx", None)
+        item.pop("url", None)
+        errors.append(item)
+    return JSONResponse(status_code=422, content={"detail": errors})
+
+
 @app.exception_handler(InvalidTargetIdError)
 async def _handle_invalid_target_id(_: Request, exc: InvalidTargetIdError):
     return _problem(400, str(exc))
@@ -218,6 +273,38 @@ async def _handle_target_not_found(_: Request, exc: TargetNotFoundError):
 
 @app.exception_handler(DuplicateTargetError)
 async def _handle_duplicate_target(_: Request, exc: DuplicateTargetError):
+    return _problem(409, str(exc))
+
+
+@app.exception_handler(InvalidTargetProfileError)
+async def _handle_invalid_target_profile(_: Request, exc: InvalidTargetProfileError):
+    # The request was well formed and the target exists; the profile the
+    # patch would produce is what is refused. Same status code a create with
+    # the same combination gets from pydantic, so the two agree.
+    return _problem(422, str(exc))
+
+
+@app.exception_handler(TargetHasTestAccountsError)
+async def _handle_target_has_accounts(_: Request, exc: TargetHasTestAccountsError):
+    # Nothing was deleted. The registry's state is what forbids it.
+    return _problem(409, str(exc))
+
+
+@app.exception_handler(InvalidTestAccountIdError)
+async def _handle_invalid_test_account_id(_: Request, exc: InvalidTestAccountIdError):
+    return _problem(400, str(exc))
+
+
+@app.exception_handler(TestAccountNotFoundError)
+async def _handle_test_account_not_found(_: Request, exc: TestAccountNotFoundError):
+    # Also the answer when the account exists but belongs to another target:
+    # from this target's perspective it is not there, and saying so would
+    # confirm an identity the caller did not address.
+    return _problem(404, str(exc))
+
+
+@app.exception_handler(DuplicateTestAccountError)
+async def _handle_duplicate_test_account(_: Request, exc: DuplicateTestAccountError):
     return _problem(409, str(exc))
 
 

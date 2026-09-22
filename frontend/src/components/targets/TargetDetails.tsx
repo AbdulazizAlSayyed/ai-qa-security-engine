@@ -1,12 +1,38 @@
 import type { ReactNode } from "react";
 
 import StatusPill from "@/components/StatusPill";
-import { TARGET_TYPE_LABELS, type Target } from "@/types/target";
+import {
+  AUTH_METHOD_LABELS,
+  ENVIRONMENT_LABELS,
+  OWNERSHIP_STATUS_LABELS,
+  TARGET_TYPE_LABELS,
+  TOKEN_LOCATION_LABELS,
+  type Target,
+} from "@/types/target";
 
 interface TargetDetailsProps {
   target: Target;
   onClose: () => void;
   onEdit: (target: Target) => void;
+  onManageAccounts: (target: Target) => void;
+}
+
+/** One capability of the security policy, shown as granted or withheld. */
+function Capability({ label, granted }: { label: string; granted: boolean }) {
+  return (
+    <li className="flex items-center gap-2 text-sm">
+      <span
+        aria-hidden
+        className={`inline-block size-1.5 rounded-full ${
+          granted ? "bg-amber-400" : "bg-slate-700"
+        }`}
+      />
+      <span className={granted ? "text-slate-200" : "text-slate-500"}>{label}</span>
+      <span className={granted ? "text-amber-300/80" : "text-slate-600"}>
+        {granted ? "allowed" : "not allowed"}
+      </span>
+    </li>
+  );
 }
 
 function formatTimestamp(value: string): string {
@@ -37,7 +63,15 @@ function Link({ value }: { value: string | null }) {
   );
 }
 
-export default function TargetDetails({ target, onClose, onEdit }: TargetDetailsProps) {
+export default function TargetDetails({
+  target,
+  onClose,
+  onEdit,
+  onManageAccounts,
+}: TargetDetailsProps) {
+  const auth = target.authentication;
+  const policy = target.security_policy;
+
   return (
     <div className="flex flex-col">
       <dl className="flex flex-col">
@@ -48,6 +82,16 @@ export default function TargetDetails({ target, onClose, onEdit }: TargetDetails
         </Row>
         <Row label="Type">
           <span className="text-sm text-slate-200">{TARGET_TYPE_LABELS[target.type]}</span>
+        </Row>
+        <Row label="Environment">
+          <span className="text-sm text-slate-200">
+            {ENVIRONMENT_LABELS[target.environment]}
+          </span>
+        </Row>
+        <Row label="Ownership">
+          <span className="text-sm text-slate-200">
+            {OWNERSHIP_STATUS_LABELS[target.ownership_status]}
+          </span>
         </Row>
         <Row label="Base URL">
           <Link value={target.base_url} />
@@ -65,6 +109,48 @@ export default function TargetDetails({ target, onClose, onEdit }: TargetDetails
             {target.description || "—"}
           </span>
         </Row>
+        <Row label="Authentication">
+          {auth.enabled ? (
+            <div className="flex flex-col gap-1 text-sm text-slate-300">
+              <span className="text-slate-200">{AUTH_METHOD_LABELS[auth.method]}</span>
+              {auth.login_url ? <Link value={auth.login_url} /> : null}
+              {auth.username_field || auth.password_field ? (
+                <span className="font-mono text-xs text-slate-400">
+                  {auth.username_field ?? "?"} / {auth.password_field ?? "?"}
+                </span>
+              ) : null}
+              <span className="text-xs text-slate-500">
+                Credential kept in {TOKEN_LOCATION_LABELS[auth.token_location]}. Not used
+                yet &mdash; this is configuration only.
+              </span>
+            </div>
+          ) : (
+            <span className="text-sm text-slate-500">Not configured</span>
+          )}
+        </Row>
+        <Row label="Testing policy">
+          <div className="flex flex-col gap-2">
+            <StatusPill tone={policy.authorized_for_testing ? "positive" : "neutral"}>
+              {policy.authorized_for_testing
+                ? "Authorized for testing"
+                : "Not authorized"}
+            </StatusPill>
+            <ul className="flex flex-col gap-1">
+              <Capability
+                label="Security scanning"
+                granted={policy.allow_security_scanning}
+              />
+              <Capability
+                label="Authenticated testing"
+                granted={policy.allow_authenticated_testing}
+              />
+              <Capability
+                label="State-changing requests"
+                granted={policy.allow_state_changing_requests}
+              />
+            </ul>
+          </div>
+        </Row>
         <Row label="Target ID">
           <span className="font-mono text-sm break-all text-slate-400">{target.id}</span>
         </Row>
@@ -76,13 +162,20 @@ export default function TargetDetails({ target, onClose, onEdit }: TargetDetails
         </Row>
       </dl>
 
-      <div className="mt-5 flex justify-end gap-2 border-t border-slate-800 pt-4">
+      <div className="mt-5 flex flex-wrap justify-end gap-2 border-t border-slate-800 pt-4">
         <button
           type="button"
           onClick={onClose}
           className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-200 transition-colors hover:border-slate-500 hover:bg-slate-800/60"
         >
           Close
+        </button>
+        <button
+          type="button"
+          onClick={() => onManageAccounts(target)}
+          className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-200 transition-colors hover:border-slate-500 hover:bg-slate-800/60"
+        >
+          Test accounts
         </button>
         <button
           type="button"

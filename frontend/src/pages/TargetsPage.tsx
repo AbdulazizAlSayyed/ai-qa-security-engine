@@ -5,6 +5,7 @@ import StatCard from "@/components/StatCard";
 import TargetCard from "@/components/targets/TargetCard";
 import TargetDetails from "@/components/targets/TargetDetails";
 import TargetForm from "@/components/targets/TargetForm";
+import TestAccountsPanel from "@/components/targets/TestAccountsPanel";
 import { useTargets } from "@/hooks/useTargets";
 import { createTarget, deleteTarget, updateTarget } from "@/services/targets";
 import type { Target, TargetCreate } from "@/types/target";
@@ -14,6 +15,7 @@ type Dialog =
   | { kind: "create" }
   | { kind: "edit"; target: Target }
   | { kind: "details"; target: Target }
+  | { kind: "accounts"; target: Target }
   | { kind: "delete"; target: Target };
 
 export default function TargetsPage() {
@@ -198,7 +200,20 @@ export default function TargetsPage() {
             target={dialog.target}
             onClose={close}
             onEdit={(selected) => setDialog({ kind: "edit", target: selected })}
+            onManageAccounts={(selected) =>
+              setDialog({ kind: "accounts", target: selected })
+            }
           />
+        </Modal>
+      ) : null}
+
+      {dialog.kind === "accounts" ? (
+        <Modal
+          title="Test accounts"
+          subtitle={dialog.target.name}
+          onClose={close}
+        >
+          <TestAccountsPanel target={dialog.target} />
         </Modal>
       ) : null}
 

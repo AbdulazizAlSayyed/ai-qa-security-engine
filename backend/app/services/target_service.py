@@ -17,13 +17,21 @@ from pymongo import ReturnDocument
 from pymongo.asynchronous.database import AsyncDatabase
 from pymongo.errors import DuplicateKeyError
 
+from app.models import test_account as test_account_model
 from app.models.target import (
     LIST_SORT,
+    Environment,
     document_to_response,
     ensure_indexes,
     get_collection,
 )
-from app.schemas.target import TargetCreate, TargetUpdate
+from app.schemas.target import (
+    AuthenticationProfile,
+    SecurityPolicy,
+    TargetCreate,
+    TargetUpdate,
+    check_profile_coherence,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +50,20 @@ class TargetNotFoundError(TargetServiceError):
 
 class DuplicateTargetError(TargetServiceError):
     """Another target already has this name, base URL and API URL."""
+
+
+class TargetHasTestAccountsError(TargetServiceError):
+    """The target still has test accounts, so it was not deleted."""
+
+
+class InvalidTargetProfileError(TargetServiceError):
+    """The update would leave the target with an incoherent or unsafe profile.
+
+    Raised by :meth:`TargetService.update`, which judges the document a patch
+    would produce rather than the fields it mentions. Clearing
+    ``authorized_for_testing`` while capabilities remain enabled is the case
+    this exists for: each half is individually valid, and the result is not.
+    """
 
 
 def _now() -> datetime:
@@ -118,6 +140,24 @@ class TargetService:
             # updated_at either - nothing changed.
             return await self.get(target_id)
 
+        # Judge the document this patch would produce, not the patch. A
+        # client that clears authorized_for_testing without touching the
+        # capabilities it gates is sending two individually valid fields
+        # towards an unsafe result.
+        current = await self.get(target_id)
+        merged = {**current, **changes}
+        try:
+            check_profile_coherence(
+                Environment(merged["environment"]),
+                AuthenticationProfile.model_validate(merged["authentication"]),
+                SecurityPolicy.model_validate(merged["security_policy"]),
+            )
+        except (ValueError, TypeError) as exc:
+            raise InvalidTargetProfileError(
+                f"This change would leave target {target_id} with an invalid "
+                f"profile: {exc}"
+            ) from exc
+
         changes["updated_at"] = _now()
 
         try:
@@ -136,8 +176,25 @@ class TargetService:
         return document_to_response(document)
 
     async def delete(self, target_id: str) -> None:
-        """Remove a target."""
-        result = await self._collection.delete_one({"_id": _to_object_id(target_id)})
+        """Remove a target.
+
+        Refuses while test accounts still reference it. Cascading would
+        delete identities the operator configured without ever saying so,
+        and orphaning them would leave records pointing at a target that no
+        longer exists. Being told what is in the way is better than either.
+        """
+        object_id = _to_object_id(target_id)
+
+        accounts = await test_account_model.get_collection(self._db).count_documents(
+            {"target_id": target_id}
+        )
+        if accounts:
+            raise TargetHasTestAccountsError(
+                f"Target {target_id} still has {accounts} test account(s). "
+                "Delete them first, or keep the target and disable it instead."
+            )
+
+        result = await self._collection.delete_one({"_id": object_id})
         if result.deleted_count == 0:
             raise TargetNotFoundError(f"No target with id {target_id}.")
         logger.info("Deleted target %s", target_id)

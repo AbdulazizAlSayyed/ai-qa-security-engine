@@ -260,12 +260,127 @@ having been proven against a real target are different claims.
 | 8 | Recommendations | Yes | Yes (fakes) | Yes for the configured provider |
 | 9 | Retest | Yes | Yes (fakes) | **Partial** — a real scoped security rescan returning FAIL; no real QA recheck and no real PASS observed yet |
 | 10 | Reports | Yes | Yes | Yes — HTML + PDF, traceability audit, hashes, redaction |
+| 12 | Target profiles + test accounts | Yes | Yes | Yes — configuration only; nothing authenticates yet |
 | 11 | Polish + demo | Not started | — | — |
 
 `backend/scripts/final_verification.py` reports the current state from the
 database rather than from this table, and never calls a provider to
 manufacture a result. Its AI items report `NOT CONFIGURED`, `CONFIGURED`,
 `REAL VERIFIED` or `FAIL` for whichever provider `AI_PROVIDER` selects.
+
+## Phase 12 — Target profiles & test accounts
+
+A target is no longer just a name and two URLs. It carries a **profile**:
+where it runs, who owns it, how it authenticates, and what this platform is
+permitted to do to it. Alongside it, each target may have **test accounts**:
+the identities a later phase will need in order to test authorization at all.
+
+**Phase 12 does not execute authenticated testing.** Nothing signs in,
+nothing reads an authentication profile, and no engine consumes a test
+account yet. This is the configuration foundation those phases will build
+on; the authorization and security workflows themselves come later.
+
+### The profile
+
+| Block | Fields |
+|---|---|
+| Identity | `name`, `description` |
+| Application | `type` (`web_application` / `api` / `web_and_api`), `base_url`, `api_url`, `source_path` |
+| Environment | `environment` (`local` / `development` / `staging` / `test` / `production`), `ownership_status` (`owned` / `authorized` / `third_party` / `unknown`) |
+| Authentication | `enabled`, `method` (`none` / `form` / `basic` / `bearer` / `cookie` / `custom`), `login_url`, `username_field`, `password_field`, `token_location` |
+| Security policy | `authorized_for_testing`, `allow_security_scanning`, `allow_authenticated_testing`, `allow_state_changing_requests` |
+
+`username_field` and `password_field` are the **names of the inputs on the
+login form**, so a later phase knows what to fill in. Neither holds a value.
+
+### The authorization flag
+
+`authorized_for_testing` defaults to **false**, and so does every capability.
+Registering a target is not consenting to anything being done to it.
+
+The flag **gates** the rest: with it false, no `allow_*` capability may be
+true, and the API rejects any attempt — on create or on update. This is a
+technical safety control, not a legal statement. Its purpose is that a
+capability cannot be acquired one field at a time.
+
+Three more rules hold, all failing closed:
+
+- **Production is treated conservatively.** `allow_security_scanning` and
+  `allow_state_changing_requests` cannot be enabled when
+  `environment = production`, and moving an existing target to production
+  while it holds either is refused.
+- **Authenticated testing needs authentication.**
+  `allow_authenticated_testing` requires `authentication.enabled`, since
+  otherwise there is no configured way to authenticate.
+- **A patch is judged on the document it would produce**, not on the fields
+  it mentions. Clearing `authorized_for_testing` while a capability stays
+  enabled is refused, and nothing is written.
+
+### Test accounts
+
+An account belongs to exactly one target and is always addressed through it
+(`/targets/{target_id}/test-accounts/{account_id}`). An account reached
+through the wrong target answers **404** rather than being returned, so an
+identity registered for one application cannot be used against another.
+
+| Field | Notes |
+|---|---|
+| `name` | Unique within the target |
+| `role` | `admin` / `user` / `readonly` / `anonymous` / `custom` — metadata, not an authorization rule |
+| `purpose` | Free text, e.g. `authorization_test_user`. No engine matches on it |
+| `username` | The identity's username |
+| `credential_reference` | The **name** of an environment variable |
+| `credential_available` | Read-only: whether that variable is currently set |
+| `enabled`, `description`, timestamps | |
+
+An `anonymous` account represents an unauthenticated visitor and therefore
+carries neither a username nor a credential reference.
+
+Deleting a target that still has accounts is **refused with 409**, naming how
+many are in the way. Cascading would destroy identities without being asked;
+orphaning would leave records pointing at nothing.
+
+### Secret handling
+
+**No password is ever stored, logged, returned or displayed.** That is
+enforced structurally rather than by remembering to redact:
+
+- There is **no field** a credential could go into. `extra="forbid"` turns
+  `password`, `secret`, `token` or `cookie` in a request body into a 422.
+- `credential_reference` accepts only an environment-variable **name**
+  (`^[A-Z][A-Z0-9_]*$`). A pasted password does not match that shape and is
+  rejected with an explanation.
+- Free-text fields reject obvious spellings like `password=…`.
+- The value is read from the environment of the machine running the backend,
+  at the moment something needs it. It never enters MongoDB, an API response,
+  the browser or a report. The API reports only whether the variable is set.
+
+Set the values in your shell or service configuration, never in a file that
+is committed:
+
+```powershell
+$env:E2E_ADMIN_PASSWORD = '...'   # the value lives here, and only here
+```
+
+Then reference the **name** from the account:
+
+```json
+{
+  "name": "Admin test account",
+  "role": "admin",
+  "username": "admin@test.local",
+  "credential_reference": "E2E_ADMIN_PASSWORD",
+  "purpose": "authorization_test_user"
+}
+```
+
+### Backward compatibility
+
+Targets registered in Phases 1–10 are **never rewritten**. Their documents
+stay exactly as they were written, and the missing profile fields are filled
+in on read with the safe defaults above — so an old target answers every
+question a new one does, keeps its id, and remains referenced by all its
+existing assessments, runs, evidence and reports.
 
 ## Known limitations
 
@@ -286,8 +401,10 @@ listeners capture only failed requests. There is no OpenAPI import, and the
 API probes examine the registered `api_url` root only.
 
 **Authorization probing is a placeholder.** `authorization_probes` always
-returns `skipped` with its reason, because the target registry carries no
-authentication configuration or test accounts. It never claims to have run.
+returns `skipped` with its reason. Phase 12 gives the registry somewhere to
+record authentication configuration and test identities, but no engine reads
+them yet, so the probe still has nothing authorised to act with. It never
+claims to have run.
 
 **No requirements engine.** The platform has no concept of what an
 application is *supposed* to do. Nothing is stored about requirements, user

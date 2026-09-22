@@ -28,6 +28,7 @@ from app.services.report_service import ReportService
 from app.services.retest_service import RetestService
 from app.services.security_service import SecurityService
 from app.services.target_service import TargetService
+from app.services.test_account_service import TestAccountService
 
 
 def get_db() -> AsyncDatabase:
@@ -45,6 +46,21 @@ def get_target_service(db: DatabaseDep) -> TargetService:
 
 
 TargetServiceDep = Annotated[TargetService, Depends(get_target_service)]
+
+
+def get_test_account_service(
+    db: DatabaseDep, targets: TargetServiceDep
+) -> TestAccountService:
+    """Provide the test account service, reusing the registry for target lookup.
+
+    Going through ``TargetService`` rather than querying targets directly is
+    what makes an unknown target id behave identically here and everywhere
+    else, and keeps accounts from attaching to a target that is not there.
+    """
+    return TestAccountService(db=db, targets=targets)
+
+
+TestAccountServiceDep = Annotated[TestAccountService, Depends(get_test_account_service)]
 
 
 def get_qa_service(
