@@ -51,14 +51,94 @@ class Settings(BaseSettings):
     backend_port: int = 8000
     frontend_url: str = "http://localhost:5173"
 
-    # --- AI provider (wired up in Phase 5) -------------------------------
+    # --- AI analysis (Phase 5) --------------------------------------------
+    #: Which AIProvider implementation analyses evidence: "openai" or "gemini".
     ai_provider: str = "openai"
+    #: Read from the environment / backend/.env only. Never commit it.
     openai_api_key: str = ""
+    #: Deliberately no default: the model is a configuration decision, and a
+    #: guessed name would fail in a confusing way. Analysis reports a clear
+    #: configuration error until this is set.
     openai_model: str = ""
+    openai_timeout_seconds: float = 90.0
+    #: Retries inside the SDK for transient errors (429 / 5xx / network).
+    openai_max_retries: int = 1
+    #: Google Gemini, an alternative provider behind the same AIProvider
+    #: abstraction (used when AI_PROVIDER=gemini). Same "read from .env only,
+    #: never commit it" rule as the OpenAI key.
+    gemini_api_key: str = ""
+    #: Deliberately no default, for the same reason as openai_model.
+    gemini_model: str = ""
+    gemini_timeout_seconds: float = 90.0
+    #: Output budget. Reasoning models spend part of it thinking, so it is
+    #: generous; a truncated answer is rejected, never half-parsed.
+    ai_max_output_tokens: int = 8000
+    #: Context budget for the evidence handed to the model. Anything left out
+    #: is recorded on the analysis, never dropped silently.
+    ai_max_evidence_items: int = 300
+    ai_max_context_chars: int = 60_000
+    #: An analysis still "running" after this long is treated as abandoned
+    #: (e.g. the server stopped mid-call), so the assessment is not locked.
+    ai_analysis_stale_seconds: int = 600
 
-    # --- Security tooling (wired up in Phase 3) --------------------------
-    zap_api_url: str = "http://127.0.0.1:8080"
+    # --- Correlation & prioritization (Phase 6) ---------------------------
+    #: A correlation run still "running" after this long is treated as
+    #: abandoned, so a crashed run never blocks re-processing.
+    correlation_stale_seconds: int = 300
+
+    # --- Recommendations (Phase 8, advisory only) ------------------------
+    #: Most important issues supplied to one generation; the rest are listed
+    #: as omitted on the generation summary. A generation still running after
+    #: AI_ANALYSIS_STALE_SECONDS is treated as abandoned.
+    recommendation_max_issues: int = 50
+
+    # --- Retest (Phase 9) -------------------------------------------------
+    #: A retest still "running" after this long is recorded as abandoned,
+    #: which releases the per-recommendation lock. Longer than a ZAP scan.
+    retest_stale_seconds: int = 1800
+
+    # --- Reports (Phase 10) ------------------------------------------------
+    #: A report still "running" after this long is recorded as abandoned.
+    #: Rendered HTML / PDF files are written under ``reports_root``.
+    report_stale_seconds: int = 600
+
+    # --- QA engine (Playwright) ------------------------------------------
+    qa_headless: bool = True
+    #: Blank uses Playwright's bundled Chromium. "chrome" or "msedge" drive a
+    #: locally installed browser instead.
+    qa_browser_channel: str = ""
+    #: Kept short so a dead target fails fast instead of holding a request.
+    qa_navigation_timeout_ms: int = 15_000
+    qa_test_timeout_ms: int = 30_000
+
+    # --- Security engine -------------------------------------------------
+    security_enabled: bool = True
+    #: Whole-scan budget handed to each external scanner.
+    security_timeout_seconds: int = 180
+
+    # OWASP ZAP runs as its own native process and is reached over its REST
+    # API. Port 8090 rather than ZAP's 8080 default, which is very commonly
+    # already taken on a developer machine.
+    zap_enabled: bool = True
+    zap_host: str = "127.0.0.1"
+    zap_port: int = 8090
     zap_api_key: str = ""
+    #: Absolute path to zap.bat / zap.sh, when the platform starts ZAP itself.
+    #: Left blank means "ZAP is already running"; never hardcode a machine path.
+    zap_executable: str = ""
+    zap_spider: bool = True
+    zap_spider_max_children: int = 10
+
+    # Custom API probes. Safe methods only; see engines/security/api_probes.py.
+    api_probes_enabled: bool = True
+    api_probe_timeout_seconds: int = 10
+    #: Local targets routinely use self-signed certificates.
+    api_probe_verify_tls: bool = False
+
+    # Semgrep is optional; a scan succeeds whether or not it is installed.
+    semgrep_enabled: bool = True
+    semgrep_executable: str = "semgrep"
+    semgrep_ruleset: str = "p/security-audit"
 
     # --- Filesystem workspaces -------------------------------------------
     qa_workspace_root: Path = BACKEND_ROOT / ".qa-workspace"

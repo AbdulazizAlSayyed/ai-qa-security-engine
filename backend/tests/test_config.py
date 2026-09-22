@@ -27,7 +27,7 @@ def test_no_container_or_postgres_artefacts_in_config(settings: Settings) -> Non
         [
             settings.mongodb_uri,
             settings.frontend_url,
-            settings.zap_api_url,
+            f"{settings.zap_host}:{settings.zap_port}",
             str(settings.qa_workspace_root),
         ]
     ).lower()

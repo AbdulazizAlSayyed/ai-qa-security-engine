@@ -45,6 +45,10 @@ async def connect_to_mongo() -> AsyncMongoClient:
         serverSelectionTimeoutMS=settings.mongodb_timeout_ms,
         connectTimeoutMS=settings.mongodb_timeout_ms,
         appname="ai-qa-security-engine",
+        # BSON dates carry no timezone. Without this, stored timestamps read
+        # back as naive datetimes and would serialise without the trailing Z,
+        # so clients could not tell they are UTC.
+        tz_aware=True,
     )
     logger.info(
         "MongoDB client created (uri=%s, database=%s)",

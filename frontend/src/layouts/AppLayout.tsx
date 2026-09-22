@@ -4,16 +4,15 @@ import { config } from "@/lib/config";
 
 interface NavItem {
   label: string;
-  to?: string;
-  phase?: string;
+  to: string;
 }
 
 const NAV: NavItem[] = [
   { label: "Dashboard", to: "/" },
-  { label: "Targets", phase: "Phase 1" },
-  { label: "Assessments", phase: "Phase 2" },
-  { label: "Findings", phase: "Phase 5" },
-  { label: "Reports", phase: "Phase 10" },
+  { label: "Targets", to: "/targets" },
+  { label: "QA Engine", to: "/qa" },
+  { label: "Security", to: "/security" },
+  { label: "Assessments", to: "/assessments" },
 ];
 
 export default function AppLayout() {
@@ -27,34 +26,23 @@ export default function AppLayout() {
 
         <nav className="px-3 pb-5">
           <ul className="flex flex-wrap gap-1 lg:flex-col">
-            {NAV.map((item) =>
-              item.to ? (
-                <li key={item.label}>
-                  <NavLink
-                    to={item.to}
-                    end
-                    className={({ isActive }) =>
-                      `block rounded-lg px-3 py-2 text-sm transition-colors ${
-                        isActive
-                          ? "bg-sky-500/10 text-sky-300"
-                          : "text-slate-300 hover:bg-slate-800/60 hover:text-slate-100"
-                      }`
-                    }
-                  >
-                    {item.label}
-                  </NavLink>
-                </li>
-              ) : (
-                <li
-                  key={item.label}
-                  className="flex items-center justify-between rounded-lg px-3 py-2 text-sm text-slate-600"
-                  title={`Arrives in ${item.phase}`}
+            {NAV.map((item) => (
+              <li key={item.label}>
+                <NavLink
+                  to={item.to}
+                  end={item.to === "/"}
+                  className={({ isActive }) =>
+                    `block rounded-lg px-3 py-2 text-sm transition-colors ${
+                      isActive
+                        ? "bg-sky-500/10 text-sky-300"
+                        : "text-slate-300 hover:bg-slate-800/60 hover:text-slate-100"
+                    }`
+                  }
                 >
-                  <span>{item.label}</span>
-                  <span className="font-mono text-[10px] text-slate-700">{item.phase}</span>
-                </li>
-              ),
-            )}
+                  {item.label}
+                </NavLink>
+              </li>
+            ))}
           </ul>
         </nav>
       </aside>

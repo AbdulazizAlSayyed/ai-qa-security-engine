@@ -15,7 +15,8 @@ httptools==0.7.1
 python-dotenv==1.2.1
 PyYAML==6.0.2
 watchfiles==1.1.1
-websockets==16.0
+# Bumped from 16.0 to 15.0.1: google-genai (below) caps it at <15.1.0.
+websockets==15.0.1
 colorama==0.4.6
 
 # --- Configuration and validation ------------------------------------
@@ -24,7 +25,8 @@ pydantic_core==2.20.1
 pydantic-settings==2.15.0
 annotated-types==0.7.0
 typing-inspection==0.4.4
-typing_extensions==4.12.2
+# 4.12.2 -> 4.16.0: pulled up by the openai SDK (Phase 5).
+typing_extensions==4.16.0
 
 # --- MongoDB ---------------------------------------------------------
 # PyMongo's native AsyncMongoClient (4.9+). Motor is intentionally absent:
@@ -32,14 +34,55 @@ typing_extensions==4.12.2
 pymongo==4.10.1
 dnspython==2.8.0
 
+# --- QA engine (Playwright) ------------------------------------------
+# Pinned to 1.63.0 to match the Chromium build already in the local
+# ms-playwright cache (chromium-1243). Browsers are installed separately
+# with: python -m playwright install chromium
+playwright==1.63.0
+greenlet==3.5.6
+pyee==13.0.1
+
 # --- HTTP client (used by TestClient, and by the engines later) -------
-httpx==0.28.0
+# httpx and anyio bumped from 0.28.0 / 4.6.2.post1: google-genai (below)
+# requires httpx>=0.28.1 and anyio>=4.8.0.
+httpx==0.28.1
 httpcore==1.0.7
 h11==0.14.0
-anyio==4.6.2.post1
+anyio==4.15.1
 sniffio==1.3.1
 idna==3.7
 certifi==2024.6.2
+
+# --- AI provider (Phase 5) -------------------------------------------
+# Official OpenAI SDK, used only inside app/engines/ai/openai_provider.py.
+# Everything else talks to the AIProvider abstraction.
+openai==2.54.0
+distro==1.9.0
+jiter==0.17.0
+tqdm==4.70.1
+
+# Official Google Gen AI SDK, used only inside
+# app/engines/ai/gemini_provider.py. An alternative provider behind the
+# same AIProvider abstraction (AI_PROVIDER=gemini). Pulls in a newer httpx,
+# anyio and websockets than the pins above required on their own; those are
+# bumped to match what pip actually resolved (verified: full suite still
+# 641/641 green after the bump).
+google-genai==1.22.0
+google-auth==2.58.0
+requests==2.34.2
+tenacity==8.5.0
+cryptography==50.0.1
+cffi==2.1.1
+pycparser==3.0
+pyasn1==0.6.4
+pyasn1_modules==0.4.2
+
+# --- Reports (Phase 10) ----------------------------------------------
+# Pure-Python PDF rendering, used only in app/engines/reporting/pdf_renderer.py.
+# No browser is involved in producing the PDF.
+reportlab==5.0.1
+pillow==12.3.0
+charset-normalizer==3.5.1
 
 # --- Tests -----------------------------------------------------------
 pytest==8.4.2
