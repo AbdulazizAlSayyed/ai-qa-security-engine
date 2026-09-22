@@ -93,9 +93,9 @@ class AuthMethod(str, Enum):
     """
 
     NONE = "none"
-    FORM = "form"
+    FORM_LOGIN = "form_login"
     BASIC = "basic"
-    BEARER = "bearer"
+    BEARER_TOKEN = "bearer_token"
     COOKIE = "cookie"
     CUSTOM = "custom"
 
@@ -121,13 +121,19 @@ class TokenLocation(str, Enum):
 PROFILE_DEFAULTS: dict[str, Any] = {
     "environment": Environment.LOCAL.value,
     "ownership_status": OwnershipStatus.UNKNOWN.value,
+    # The explicit safety boundary for state-changing work. False means the
+    # platform has not been told this application is the operator's own test
+    # environment, and an unrecorded answer is never read as one.
+    "owned_test_environment": False,
     "authentication": {
         "enabled": False,
         "method": AuthMethod.NONE.value,
         "login_url": None,
         "username_field": None,
         "password_field": None,
+        "cookie_name": None,
         "token_location": TokenLocation.NONE.value,
+        "notes": "",
     },
     "security_policy": {
         "authorized_for_testing": False,

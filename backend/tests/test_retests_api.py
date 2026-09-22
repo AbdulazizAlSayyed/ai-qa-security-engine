@@ -69,7 +69,9 @@ class FakeRetestEngines:
         self.qa_configs.append(config)
         return self.qa_outcome or qa_outcome()
 
-    def security(self, *, base_url, api_url, source_path, config) -> SecurityRunOutcome:
+    def security(
+        self, *, base_url, api_url, source_path, config, authorization_readiness=None
+    ) -> SecurityRunOutcome:
         self.security_configs.append(config)
         return self.security_outcome or security_outcome()
 

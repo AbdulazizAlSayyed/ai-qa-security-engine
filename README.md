@@ -286,12 +286,30 @@ on; the authorization and security workflows themselves come later.
 |---|---|
 | Identity | `name`, `description` |
 | Application | `type` (`web_application` / `api` / `web_and_api`), `base_url`, `api_url`, `source_path` |
-| Environment | `environment` (`local` / `development` / `staging` / `test` / `production`), `ownership_status` (`owned` / `authorized` / `third_party` / `unknown`) |
-| Authentication | `enabled`, `method` (`none` / `form` / `basic` / `bearer` / `cookie` / `custom`), `login_url`, `username_field`, `password_field`, `token_location` |
+| Environment | `environment` (`local` / `development` / `staging` / `test` / `production`), `ownership_status` (`owned` / `authorized` / `third_party` / `unknown`), `owned_test_environment` |
+| Authentication | `enabled`, `method` (`none` / `form_login` / `basic` / `bearer_token` / `cookie` / `custom`), `login_url`, `username_field`, `password_field`, `cookie_name`, `token_location`, `notes` |
 | Security policy | `authorized_for_testing`, `allow_security_scanning`, `allow_authenticated_testing`, `allow_state_changing_requests` |
 
-`username_field` and `password_field` are the **names of the inputs on the
-login form**, so a later phase knows what to fill in. Neither holds a value.
+`username_field`, `password_field` and `cookie_name` are **names**, so a
+later phase knows what to fill in and which cookie carries the session. None
+of them holds a value, and `notes` rejects anything that looks like one.
+
+### `owned_test_environment`
+
+An explicit declaration, default **false**, kept separate from the rest of
+the policy because it answers a different question. `authorized_for_testing`
+says *may this platform test the application*; `owned_test_environment` says
+*is this the operator's own test environment* — the difference between being
+allowed to look and being allowed to change.
+
+- **false** — only the existing non-destructive behaviour is available.
+- **true** — the operator declares this is their own test environment. A
+  later phase may use it to unlock controlled state-changing testing.
+
+Setting it to true **enables nothing on its own**. It is a precondition:
+`allow_state_changing_requests` cannot be set without it, and even with
+both set, no engine sends a state-changing request in this phase because
+none is implemented.
 
 ### The authorization flag
 
@@ -326,15 +344,25 @@ identity registered for one application cannot be used against another.
 | Field | Notes |
 |---|---|
 | `name` | Unique within the target |
-| `role` | `admin` / `user` / `readonly` / `anonymous` / `custom` — metadata, not an authorization rule |
+| `role` | Any label the target's own application uses (`admin`, `manager`, `customer`, …) — metadata, not an authorization rule |
 | `purpose` | Free text, e.g. `authorization_test_user`. No engine matches on it |
 | `username` | The identity's username |
-| `credential_reference` | The **name** of an environment variable |
-| `credential_available` | Read-only: whether that variable is currently set |
+| `credential_reference` | `{username_env, password_env}` — environment variable **names** |
+| `credential_available` | Read-only: whether every named variable currently resolves |
 | `enabled`, `description`, timestamps | |
 
+Roles are deliberately **open**: an application's roles are its own, and a
+closed list here would either exclude real ones or grow into a taxonomy this
+platform has no business owning. The value is validated as a label only, and
+nothing matches on it. A target may hold as many accounts with as many
+distinct roles as it needs — two different roles is what Phase 18 will
+require to ask an authorization question at all.
+
 An `anonymous` account represents an unauthenticated visitor and therefore
-carries neither a username nor a credential reference.
+carries neither a username nor a credential reference. Several may coexist.
+
+Within one target both `name` and `username` are unique, so one identity
+cannot be recorded twice and then be ambiguous to reason about.
 
 Deleting a target that still has accounts is **refused with 409**, naming how
 many are in the way. Cascading would destroy identities without being asked;
@@ -352,14 +380,28 @@ enforced structurally rather than by remembering to redact:
   rejected with an explanation.
 - Free-text fields reject obvious spellings like `password=…`.
 - The value is read from the environment of the machine running the backend,
-  at the moment something needs it. It never enters MongoDB, an API response,
-  the browser or a report. The API reports only whether the variable is set.
+  at the moment something needs it, by the one component allowed to:
+  `app/engines/security/credentials.py`. It never enters MongoDB, an API
+  response, the browser or a report. The API reports only whether the
+  reference resolves.
+
+**`CredentialResolver`** is that component. It turns an account's reference
+into a `RuntimeCredential` that exists only in memory for the duration of a
+call, and is built to be hard to leak from: `repr`, `str` and `format` all
+render `<redacted>`, it is not a pydantic model so nothing can serialise it
+into a response, and nothing persists it. A missing variable raises
+`CredentialError` naming the variable — never substituted, never guessed,
+never silently skipped, because a test that appears to run under an identity
+it never had is worse than one that refuses to start.
+
+Nothing in the current pipeline calls `resolve()`. Phase 12 only uses
+`is_resolvable()`, which answers yes or no and discards everything else.
 
 Set the values in your shell or service configuration, never in a file that
 is committed:
 
 ```powershell
-$env:E2E_ADMIN_PASSWORD = '...'   # the value lives here, and only here
+$env:AIQASE_TEST_PASSWORD_ADMIN = '...'   # the value lives here, and only here
 ```
 
 Then reference the **name** from the account:
@@ -369,10 +411,21 @@ Then reference the **name** from the account:
   "name": "Admin test account",
   "role": "admin",
   "username": "admin@test.local",
-  "credential_reference": "E2E_ADMIN_PASSWORD",
+  "credential_reference": {
+    "username_env": null,
+    "password_env": "AIQASE_TEST_PASSWORD_ADMIN"
+  },
   "purpose": "authorization_test_user"
 }
 ```
+
+### What Phase 12 does not do
+
+No login is performed, no page is crawled, no authenticated request is sent,
+no authorization is probed and no state-changing request is made. There is no
+authentication executor, and `CredentialResolver` has no caller in the
+pipeline. Those belong to later phases; this one only records configuration
+so they have something truthful to read.
 
 ### Backward compatibility
 
@@ -401,10 +454,13 @@ listeners capture only failed requests. There is no OpenAPI import, and the
 API probes examine the registered `api_url` root only.
 
 **Authorization probing is a placeholder.** `authorization_probes` always
-returns `skipped` with its reason. Phase 12 gives the registry somewhere to
-record authentication configuration and test identities, but no engine reads
-them yet, so the probe still has nothing authorised to act with. It never
-claims to have run.
+returns `skipped`. Phase 12 gives the registry somewhere to record
+authentication configuration and test identities, and the skip reason now
+names precisely what is missing — no owned-test-environment declaration, no
+authentication configured, no resolvable account, or only one role — rather
+than giving every target the same sentence. A fully configured target is
+told the engine itself is what has not arrived. It never claims to have run,
+and no configuration turns it into one.
 
 **No requirements engine.** The platform has no concept of what an
 application is *supposed* to do. Nothing is stored about requirements, user

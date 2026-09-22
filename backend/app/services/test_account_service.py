@@ -15,7 +15,6 @@ thing the service reports about it is whether it is set.
 from __future__ import annotations
 
 import logging
-import os
 from datetime import datetime, timezone
 from typing import Any
 
@@ -24,6 +23,7 @@ from pymongo import ReturnDocument
 from pymongo.asynchronous.database import AsyncDatabase
 from pymongo.errors import DuplicateKeyError
 
+from app.engines.security.credentials import CredentialResolver
 from app.models.test_account import (
     LIST_SORT,
     document_to_response,
@@ -64,26 +64,34 @@ def _to_object_id(account_id: str) -> ObjectId:
     return ObjectId(account_id)
 
 
-def credential_available(reference: str | None) -> bool:
-    """Is the named environment variable set on this machine?
-
-    A boolean, derived at read time. The value is never read into a
-    variable, returned, stored or logged - the operator needs to know
-    whether they still have configuration to do, not what the secret is.
-    """
-    if not reference:
-        return False
-    return bool(os.environ.get(reference, "").strip())
+#: One resolver for the service. It reads the process environment, so it
+#: holds no state worth per-request construction.
+_RESOLVER = CredentialResolver()
 
 
 def _with_availability(document: dict[str, Any]) -> dict[str, Any]:
-    document["credential_available"] = credential_available(
-        document.get("credential_reference")
-    )
+    """Add the read-only "is this account's configuration complete" flag.
+
+    Asks the resolver the yes/no question and throws away everything else.
+    The value itself is never read here, returned, stored or logged - an
+    operator needs to know whether there is setup left to do, which is not
+    the same as being shown the secret.
+
+    A disabled account reports ``False`` because it is not usable, which is
+    the question being asked.
+    """
+    document["credential_available"] = _RESOLVER.is_resolvable(document)
     return document
 
 
-_DUPLICATE_MESSAGE = "This target already has a test account with that name."
+#: Two uniqueness rules can produce the conflict, so the message names both
+#: rather than asserting which one it was. Mongo reports the index, but the
+#: caller's useful question is "what do I have to change", and either field
+#: answers it.
+_DUPLICATE_MESSAGE = (
+    "This target already has a test account with that name, or one with that "
+    "username. Both are unique within a target."
+)
 
 
 class TestAccountService:

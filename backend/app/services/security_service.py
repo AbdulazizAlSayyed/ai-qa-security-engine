@@ -21,7 +21,8 @@ from pymongo.asynchronous.database import AsyncDatabase
 from pymongo.errors import PyMongoError
 
 from app.core.config import Settings
-from app.engines.security.api_probes import ProbeConfig
+from app.engines.security.api_probes import AuthorizationReadiness, ProbeConfig
+from app.engines.security.credentials import CredentialResolver
 from app.engines.security.models import SecurityRunOutcome
 from app.engines.security.security_engine import (
     SecurityEngineConfig,
@@ -29,6 +30,7 @@ from app.engines.security.security_engine import (
 )
 from app.engines.security.semgrep_runner import SemgrepConfig
 from app.engines.security.zap_runner import ZapConfig
+from app.models import test_account as test_account_model
 from app.models.security_run import (
     LIST_SORT,
     document_to_response,
@@ -39,6 +41,10 @@ from app.models.target import TargetType
 from app.services.target_service import TargetService
 
 logger = logging.getLogger(__name__)
+
+#: Used only to answer "does this account's configuration resolve?" when
+#: summarising readiness. No credential value is read into this module.
+_RESOLVER = CredentialResolver()
 
 DEFAULT_RUN_LIMIT = 50
 
@@ -77,6 +83,7 @@ class SecurityEngine(Protocol):
         api_url: str | None,
         source_path: str | None,
         config: SecurityEngineConfig,
+        authorization_readiness: AuthorizationReadiness | None = None,
     ) -> SecurityRunOutcome: ...
 
 
@@ -142,6 +149,32 @@ class SecurityService:
             )
 
         return base_url
+
+    async def _authorization_readiness(
+        self, target: dict[str, Any]
+    ) -> AuthorizationReadiness:
+        """Summarise the target's profile for the authorization placeholder.
+
+        Configuration only. It counts what is registered and whether the
+        named environment variables resolve; it never reads a credential
+        value, never contacts the target and never authenticates. The result
+        shapes a skip reason, nothing more.
+        """
+        authentication = target.get("authentication") or {}
+        accounts = (
+            await test_account_model.get_collection(self._db)
+            .find({"target_id": target["id"], "enabled": True})
+            .to_list(length=None)
+        )
+        usable = [account for account in accounts if _RESOLVER.is_resolvable(account)]
+        roles = {str(account.get("role", "")).strip().lower() for account in usable}
+
+        return AuthorizationReadiness(
+            owned_test_environment=bool(target.get("owned_test_environment", False)),
+            authentication_configured=bool(authentication.get("enabled", False)),
+            usable_accounts=len(usable),
+            distinct_roles=len(roles - {""}),
+        )
 
     def _engine_config(self, components: frozenset[str] | None = None) -> SecurityEngineConfig:
         """Engine configuration from settings.
@@ -211,6 +244,8 @@ class SecurityService:
             api_url,
         )
 
+        readiness = await self._authorization_readiness(target)
+
         # Blocking scanners driving external processes; keep the loop free.
         outcome = await asyncio.to_thread(
             self._engine,
@@ -218,6 +253,7 @@ class SecurityService:
             api_url=api_url,
             source_path=source_path,
             config=self._engine_config(components),
+            authorization_readiness=readiness,
         )
 
         document: dict[str, Any] = {

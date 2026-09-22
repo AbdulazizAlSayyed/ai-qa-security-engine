@@ -46,7 +46,12 @@ MAX_FIELD_NAME_LENGTH = 100
 
 #: Methods whose configuration is a login form the platform would fill in.
 #: Only these require the form's own field names to be recorded.
-FORM_METHODS = frozenset({AuthMethod.FORM})
+FORM_METHODS = frozenset({AuthMethod.FORM_LOGIN})
+
+#: Methods that identify the session by a named cookie.
+COOKIE_METHODS = frozenset({AuthMethod.COOKIE})
+
+MAX_NOTES_LENGTH = 1000
 
 # Used for validation only. The original string is what gets stored, because
 # pydantic's URL type normalises "http://localhost:3000" into
@@ -114,9 +119,20 @@ class AuthenticationProfile(BaseModel):
         max_length=MAX_FIELD_NAME_LENGTH,
         description="Name or test id of the password input. Never a password.",
     )
+    cookie_name: str | None = Field(
+        default=None,
+        max_length=MAX_FIELD_NAME_LENGTH,
+        description="Name of the session cookie. Never its value.",
+        examples=["session"],
+    )
     token_location: TokenLocation = Field(
         default=TokenLocation.NONE,
         description="Where the target keeps the credential once authenticated.",
+    )
+    notes: str = Field(
+        default="",
+        max_length=MAX_NOTES_LENGTH,
+        description="Anything a later phase would need to know. Never a credential.",
     )
 
     @field_validator("login_url")
@@ -124,10 +140,23 @@ class AuthenticationProfile(BaseModel):
     def _validate_login_url(cls, value: str | None) -> str | None:
         return _clean_optional_url(value, "login_url")
 
-    @field_validator("username_field", "password_field")
+    @field_validator("username_field", "password_field", "cookie_name")
     @classmethod
     def _validate_field_names(cls, value: str | None) -> str | None:
         return _clean_optional_text(value)
+
+    @field_validator("notes")
+    @classmethod
+    def _notes_carry_no_credentials(cls, value: str) -> str:
+        """A free-text box next to a login form invites a pasted password."""
+        lowered = value.lower()
+        for marker in ("password=", "password:", "passwd=", "secret=", "token="):
+            if marker in lowered:
+                raise ValueError(
+                    "authentication.notes must not contain credentials. Credentials "
+                    "are referenced by environment variable name on a test account."
+                )
+        return value
 
     @model_validator(mode="after")
     def _coherent_configuration(self) -> AuthenticationProfile:
@@ -164,6 +193,12 @@ class AuthenticationProfile(BaseModel):
                 raise ValueError(
                     f"a '{self.method.value}' login needs {', '.join(missing)}."
                 )
+
+        if self.method in COOKIE_METHODS and not self.cookie_name:
+            raise ValueError(
+                f"a '{self.method.value}' session needs cookie_name, otherwise a later "
+                "phase cannot tell which cookie carries the session."
+            )
 
         return self
 
@@ -277,6 +312,15 @@ class TargetBase(BaseModel):
         default=OwnershipStatus.UNKNOWN,
         description="How this platform comes to be pointed at the target.",
     )
+    owned_test_environment: bool = Field(
+        default=False,
+        description=(
+            "The operator declares this is their own test environment. False means "
+            "only the existing non-destructive behaviour is available. True is a "
+            "precondition for state-changing testing in a later phase - it does not "
+            "enable anything on its own, and nothing acts on it today."
+        ),
+    )
     authentication: AuthenticationProfile = Field(
         default_factory=AuthenticationProfile,
         description="How the target authenticates. Configuration only; nothing logs in.",
@@ -301,6 +345,7 @@ def check_profile_coherence(
     environment: Environment,
     authentication: AuthenticationProfile,
     policy: SecurityPolicy,
+    owned_test_environment: bool = False,
 ) -> None:
     """Reject combinations that are unsafe or cannot be carried out.
 
@@ -313,6 +358,18 @@ def check_profile_coherence(
     Raises ``ValueError`` so pydantic reports it as a 422 on create, and the
     service can translate it the same way on update.
     """
+    # Writing to an application needs two separate answers: the operator is
+    # permitted to test it, and the operator says it is their own test
+    # environment. The second is the one that distinguishes "I may look at
+    # this" from "I may change it", so it gates state-changing work on its
+    # own rather than being folded into the general authorisation flag.
+    if policy.allow_state_changing_requests and not owned_test_environment:
+        raise ValueError(
+            "allow_state_changing_requests requires owned_test_environment, an "
+            "explicit declaration that this application is the operator's own "
+            "test environment."
+        )
+
     if environment is Environment.PRODUCTION:
         # Passive reading of a production system is a defensible choice to
         # make deliberately. Scanning it, or writing to it, is not something
@@ -341,7 +398,10 @@ class TargetCreate(TargetBase):
     @model_validator(mode="after")
     def _profile_is_coherent(self) -> TargetCreate:
         check_profile_coherence(
-            self.environment, self.authentication, self.security_policy
+            self.environment,
+            self.authentication,
+            self.security_policy,
+            self.owned_test_environment,
         )
         return self
 
@@ -365,6 +425,7 @@ class TargetUpdate(BaseModel):
     enabled: bool | None = None
     environment: Environment | None = None
     ownership_status: OwnershipStatus | None = None
+    owned_test_environment: bool | None = None
     # Each block is replaced whole rather than merged field by field. A
     # half-applied security policy is exactly the state the fail-closed rule
     # exists to prevent, so the client sends the policy it wants to hold.
@@ -405,6 +466,7 @@ class TargetResponse(BaseModel):
     enabled: bool
     environment: Environment = Environment.LOCAL
     ownership_status: OwnershipStatus = OwnershipStatus.UNKNOWN
+    owned_test_environment: bool = False
     authentication: AuthenticationProfile = Field(default_factory=AuthenticationProfile)
     security_policy: SecurityPolicy = Field(default_factory=SecurityPolicy)
     created_at: datetime

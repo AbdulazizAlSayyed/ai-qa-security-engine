@@ -73,12 +73,13 @@ def make_target(client: TestClient, target_cleanup: list[str]) -> Callable[..., 
 @pytest.fixture
 def account_payload() -> Callable[..., dict[str, Any]]:
     def _build(**overrides: Any) -> dict[str, Any]:
+        unique = uuid4().hex[:8]
         body: dict[str, Any] = {
-            "name": f"pytest-account-{uuid4().hex[:8]}",
+            "name": f"pytest-account-{unique}",
             "role": "admin",
             "purpose": "authorization_test_user",
-            "username": "admin@test.local",
-            "credential_reference": "E2E_ADMIN_PASSWORD",
+            "username": f"admin-{unique}@test.local",
+            "credential_reference": {"password_env": "E2E_ADMIN_PASSWORD"},
             "description": "Created by the automated test suite.",
             "enabled": True,
         }
@@ -109,8 +110,9 @@ def test_create_returns_201_and_safe_metadata(client, make_target, account_paylo
     assert created["name"] == body["name"]
     assert created["role"] == "admin"
     assert created["purpose"] == "authorization_test_user"
-    assert created["username"] == "admin@test.local"
-    assert created["credential_reference"] == "E2E_ADMIN_PASSWORD"
+    assert created["username"] == body["username"]
+    assert created["credential_reference"]["password_env"] == "E2E_ADMIN_PASSWORD"
+    assert created["credential_reference"]["username_env"] is None
     assert created["enabled"] is True
     assert "credential_available" in created
 
@@ -170,6 +172,29 @@ def test_a_duplicate_name_on_one_target_is_rejected(client, make_target, account
     body = account_payload()
     _create(client, target["id"], body)
     assert client.post(f"/targets/{target['id']}/test-accounts", json=body).status_code == 409
+
+
+def test_a_duplicate_username_on_one_target_is_rejected(
+    client, make_target, account_payload
+) -> None:
+    """Two records for one identity would make an authorization answer ambiguous."""
+    target = make_target()
+    first = account_payload()
+    _create(client, target["id"], first)
+
+    clash = account_payload(username=first["username"])
+    response = client.post(f"/targets/{target['id']}/test-accounts", json=clash)
+    assert response.status_code == 409, response.text
+
+
+def test_several_anonymous_accounts_can_coexist(
+    client, make_target, account_payload
+) -> None:
+    """They share "no username", which the uniqueness rule must not treat as a clash."""
+    target = make_target()
+    for _ in range(2):
+        body = account_payload(role="anonymous", username=None, credential_reference={})
+        assert _create(client, target["id"], body)["username"] is None
 
 
 def test_the_same_name_on_two_targets_is_fine(client, make_target, account_payload) -> None:
@@ -261,23 +286,49 @@ def test_a_target_with_accounts_is_not_deleted_silently(
 # --- roles and purposes -----------------------------------------------
 
 
-@pytest.mark.parametrize("role", ["admin", "user", "readonly", "anonymous", "custom"])
-def test_every_supported_role_is_accepted(client, make_target, account_payload, role) -> None:
+@pytest.mark.parametrize(
+    "role", ["admin", "user", "readonly", "manager", "customer", "guest", "read-only", "Editor"]
+)
+def test_any_role_name_the_target_uses_is_accepted(
+    client, make_target, account_payload, role
+) -> None:
+    """Roles are the target application's own vocabulary, not this platform's."""
     target = make_target()
-    body = account_payload(role=role)
-    if role == "anonymous":
-        body["username"] = None
-        body["credential_reference"] = None
-    assert _create(client, target["id"], body)["role"] == role
+    assert _create(client, target["id"], account_payload(role=role))["role"] == role
 
 
-@pytest.mark.parametrize("role", ["superuser", "ADMIN", "root", ""])
-def test_an_unsupported_role_is_rejected(client, make_target, account_payload, role) -> None:
+def test_an_anonymous_role_still_refuses_an_identity(
+    client, make_target, account_payload
+) -> None:
+    target = make_target()
+    body = account_payload(role="anonymous", username=None, credential_reference={})
+    assert _create(client, target["id"], body)["role"] == "anonymous"
+
+
+@pytest.mark.parametrize("role", ["", "   ", "1admin", "-admin", "ad min", "admin!"])
+def test_a_role_that_is_not_a_label_is_rejected(
+    client, make_target, account_payload, role
+) -> None:
+    """Open vocabulary, but still a label: no empty, no punctuation, no spaces."""
     target = make_target()
     assert (
         client.post(f"/targets/{target['id']}/test-accounts", json=account_payload(role=role)).status_code
         == 422
     )
+
+
+def test_two_accounts_with_different_roles_can_coexist(
+    client, make_target, account_payload
+) -> None:
+    """Authorization testing needs two identities; the registry must hold them."""
+    target = make_target()
+    admin = _create(client, target["id"], account_payload(role="admin", username="a@test.local"))
+    member = _create(
+        client, target["id"], account_payload(role="manager", username="b@test.local")
+    )
+    listed = client.get(f"/targets/{target['id']}/test-accounts").json()
+    assert {a["role"] for a in listed} == {"admin", "manager"}
+    assert admin["id"] != member["id"]
 
 
 def test_an_anonymous_account_carries_no_identity(client, make_target, account_payload) -> None:
@@ -342,7 +393,7 @@ def test_a_credential_pasted_into_credential_reference_is_not_echoed(
     target = make_target()
     response = client.post(
         f"/targets/{target['id']}/test-accounts",
-        json=account_payload(credential_reference=SECRET),
+        json=account_payload(credential_reference={"password_env": SECRET}),
     )
     assert response.status_code == 422
     assert SECRET not in response.text
@@ -351,26 +402,32 @@ def test_a_credential_pasted_into_credential_reference_is_not_echoed(
 def test_ordinary_validation_errors_still_say_what_they_got(
     client, make_target, account_payload
 ) -> None:
-    """Only credential fields are redacted; debuggability is kept elsewhere."""
+    """Only credential fields are redacted; debuggability is kept elsewhere.
+
+    ``"not a role"`` is rejected for its shape, not its meaning - any label
+    the target's own application uses is accepted - and the error quotes it
+    back so the caller can see what was wrong.
+    """
     target = make_target()
     response = client.post(
-        f"/targets/{target['id']}/test-accounts", json=account_payload(role="superuser")
+        f"/targets/{target['id']}/test-accounts", json=account_payload(role="not a role")
     )
     assert response.status_code == 422
-    assert "superuser" in response.text
+    assert "not a role" in response.text
 
 
 @pytest.mark.parametrize(
     "value",
     [SECRET, "my_password", "lowercase", "E2E ADMIN PASSWORD", "1PASSWORD", "-X-", "p@ssw0rd!"],
 )
+@pytest.mark.parametrize("key", ["password_env", "username_env"])
 def test_credential_reference_only_accepts_an_env_var_name(
-    client, make_target, account_payload, value
+    client, make_target, account_payload, value, key
 ) -> None:
     target = make_target()
     response = client.post(
         f"/targets/{target['id']}/test-accounts",
-        json=account_payload(credential_reference=value),
+        json=account_payload(credential_reference={key: value}),
     )
     assert response.status_code == 422, response.text
     assert "environment variable" in response.text
@@ -415,7 +472,9 @@ def test_no_response_ever_contains_a_secret(client, make_target, account_payload
         # The reference is a name, and names are all that is returned.
         payload = response.json()
         for account in payload if isinstance(payload, list) else [payload]:
-            assert account.get("credential_reference") in (None, "E2E_ADMIN_PASSWORD")
+            reference = account.get("credential_reference") or {}
+            assert set(reference) <= {"username_env", "password_env"}
+            assert reference.get("password_env") in (None, "E2E_ADMIN_PASSWORD")
 
 
 def test_nothing_secret_shaped_reaches_mongodb(
@@ -444,7 +503,10 @@ def test_nothing_secret_shaped_reaches_mongodb(
         "created_at",
         "updated_at",
     }
-    assert document["credential_reference"] == "E2E_ADMIN_PASSWORD"
+    assert document["credential_reference"] == {
+        "username_env": None,
+        "password_env": "E2E_ADMIN_PASSWORD",
+    }
 
     blob = json.dumps(document, default=str)
     assert SECRET not in blob
@@ -471,10 +533,8 @@ def test_an_account_without_a_reference_reports_no_credential(
     client, make_target, account_payload
 ) -> None:
     target = make_target()
-    created = _create(
-        client, target["id"], account_payload(credential_reference=None)
-    )
-    assert created["credential_reference"] is None
+    created = _create(client, target["id"], account_payload(credential_reference={}))
+    assert created["credential_reference"]["password_env"] is None
     assert created["credential_available"] is False
 
 

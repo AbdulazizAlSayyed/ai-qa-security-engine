@@ -8,10 +8,9 @@ import {
   updateTestAccount,
 } from "@/services/testAccounts";
 import {
-  ACCOUNT_ROLES,
-  ACCOUNT_ROLE_LABELS,
+  EMPTY_CREDENTIAL_REFERENCE,
   PURPOSE_SUGGESTIONS,
-  type AccountRole,
+  ROLE_SUGGESTIONS,
   type TestAccount,
   type TestAccountCreate,
 } from "@/types/testAccount";
@@ -32,7 +31,7 @@ function emptyForm(): TestAccountCreate {
     role: "user",
     purpose: "",
     username: null,
-    credential_reference: null,
+    credential_reference: { ...EMPTY_CREDENTIAL_REFERENCE },
     description: "",
     enabled: true,
   };
@@ -60,7 +59,8 @@ export default function TestAccountsPanel({ target }: TestAccountsPanelProps) {
   const [values, setValues] = useState<TestAccountCreate>(emptyForm);
 
   const [username, setUsername] = useState("");
-  const [credentialReference, setCredentialReference] = useState("");
+  const [usernameEnv, setUsernameEnv] = useState("");
+  const [passwordEnv, setPasswordEnv] = useState("");
 
   const refresh = useCallback(async () => {
     try {
@@ -78,7 +78,8 @@ export default function TestAccountsPanel({ target }: TestAccountsPanelProps) {
   function resetForm() {
     setValues(emptyForm());
     setUsername("");
-    setCredentialReference("");
+    setUsernameEnv("");
+    setPasswordEnv("");
     setFormError(null);
   }
 
@@ -91,7 +92,10 @@ export default function TestAccountsPanel({ target }: TestAccountsPanelProps) {
         ...values,
         name: values.name.trim(),
         username: orNull(username),
-        credential_reference: orNull(credentialReference),
+        credential_reference: {
+          username_env: orNull(usernameEnv),
+          password_env: orNull(passwordEnv),
+        },
       });
       resetForm();
       setShowForm(false);
@@ -162,9 +166,7 @@ export default function TestAccountsPanel({ target }: TestAccountsPanelProps) {
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-medium text-slate-100">{account.name}</span>
-                    <StatusPill tone="neutral">
-                      {ACCOUNT_ROLE_LABELS[account.role]}
-                    </StatusPill>
+                    <StatusPill tone="neutral">{account.role}</StatusPill>
                     <StatusPill tone={account.enabled ? "positive" : "neutral"}>
                       {account.enabled ? "Enabled" : "Disabled"}
                     </StatusPill>
@@ -178,20 +180,29 @@ export default function TestAccountsPanel({ target }: TestAccountsPanelProps) {
                       </dd>
                     </div>
                     <div className="flex gap-2">
-                      <dt className="text-slate-500">Password env var</dt>
+                      <dt className="text-slate-500">Credential</dt>
                       <dd className="font-mono break-all text-slate-300">
-                        {account.credential_reference ?? "none"}
-                        {account.credential_reference ? (
-                          <span
-                            className={
-                              account.credential_available
-                                ? "ml-2 text-emerald-300"
-                                : "ml-2 text-amber-300"
-                            }
-                          >
-                            {account.credential_available ? "set" : "not set on server"}
-                          </span>
-                        ) : null}
+                        {account.credential_reference.password_env ? (
+                          <>
+                            {account.credential_reference.username_env
+                              ? `${account.credential_reference.username_env} / `
+                              : ""}
+                            {account.credential_reference.password_env}
+                            <span
+                              className={
+                                account.credential_available
+                                  ? "ml-2 text-emerald-300"
+                                  : "ml-2 text-amber-300"
+                              }
+                            >
+                              {account.credential_available
+                                ? "reference configured"
+                                : "not set on server"}
+                            </span>
+                          </>
+                        ) : (
+                          "no reference"
+                        )}
                       </dd>
                     </div>
                     {account.purpose ? (
@@ -250,21 +261,23 @@ export default function TestAccountsPanel({ target }: TestAccountsPanelProps) {
               <label className={labelClass} htmlFor="account-role">
                 Role
               </label>
-              <select
+              <input
                 id="account-role"
+                list="account-role-suggestions"
                 className={`${fieldClass} mt-1`}
                 value={values.role}
-                onChange={(event) =>
-                  setValues({ ...values, role: event.target.value as AccountRole })
-                }
-              >
-                {ACCOUNT_ROLES.map((role) => (
-                  <option key={role} value={role}>
-                    {ACCOUNT_ROLE_LABELS[role]}
-                  </option>
+                onChange={(event) => setValues({ ...values, role: event.target.value })}
+                placeholder="admin"
+                maxLength={60}
+              />
+              <datalist id="account-role-suggestions">
+                {ROLE_SUGGESTIONS.map((role) => (
+                  <option key={role} value={role} />
                 ))}
-              </select>
-              <p className={hintClass}>Metadata. Nothing is granted by it.</p>
+              </datalist>
+              <p className={hintClass}>
+                Whatever the target's own application calls it. Metadata only.
+              </p>
             </div>
 
             <div>
@@ -312,20 +325,37 @@ export default function TestAccountsPanel({ target }: TestAccountsPanelProps) {
               </div>
 
               <div>
-                <label className={labelClass} htmlFor="account-credential-reference">
+                <label className={labelClass} htmlFor="account-password-env">
                   Password environment variable
                 </label>
                 <input
-                  id="account-credential-reference"
+                  id="account-password-env"
                   className={`${fieldClass} mt-1 font-mono`}
-                  value={credentialReference}
-                  onChange={(event) => setCredentialReference(event.target.value)}
-                  placeholder="E2E_ADMIN_PASSWORD"
+                  value={passwordEnv}
+                  onChange={(event) => setPasswordEnv(event.target.value)}
+                  placeholder="AIQASE_TEST_PASSWORD_ADMIN"
                   maxLength={100}
                 />
                 <p className="mt-1 text-xs text-amber-300/80">
                   The variable's NAME, not the password. Set its value in the backend's
                   environment; it is never sent here or stored.
+                </p>
+              </div>
+
+              <div>
+                <label className={labelClass} htmlFor="account-username-env">
+                  Username environment variable
+                </label>
+                <input
+                  id="account-username-env"
+                  className={`${fieldClass} mt-1 font-mono`}
+                  value={usernameEnv}
+                  onChange={(event) => setUsernameEnv(event.target.value)}
+                  placeholder="optional"
+                  maxLength={100}
+                />
+                <p className={hintClass}>
+                  Optional. Overrides the username above when set.
                 </p>
               </div>
             </div>

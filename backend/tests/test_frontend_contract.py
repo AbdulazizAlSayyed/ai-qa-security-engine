@@ -39,6 +39,7 @@ from app.schemas.target import (
     TargetResponse,
 )
 from app.schemas.test_account import (
+    CredentialReference,
     TestAccountCreate,
     TestAccountDeleteResponse,
     TestAccountResponse,
@@ -182,6 +183,7 @@ def test_target_profile_types_match_the_api(interface: str, model) -> None:
 @pytest.mark.parametrize(
     ("interface", "model"),
     [
+        ("CredentialReference", CredentialReference),
         ("TestAccount", TestAccountResponse),
         ("TestAccountCreate", TestAccountCreate),
         ("TestAccountDeleteResult", TestAccountDeleteResponse),

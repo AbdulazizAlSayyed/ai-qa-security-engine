@@ -452,19 +452,87 @@ def skipped_api_probes(reason: str) -> ComponentResult:
     )
 
 
-def authorization_probes_placeholder() -> ComponentResult:
+@dataclass(frozen=True)
+class AuthorizationReadiness:
+    """What the target's profile says about authenticated testing.
+
+    Configuration read from the registry, passed in by the service. It is
+    not evidence about the target and nothing here contacts it.
+    """
+
+    #: The operator declared this is their own test environment.
+    owned_test_environment: bool = False
+    #: The profile describes a way to authenticate.
+    authentication_configured: bool = False
+    #: Accounts that are enabled and whose credentials actually resolve.
+    usable_accounts: int = 0
+    #: Distinct roles among those accounts.
+    distinct_roles: int = 0
+
+    def missing(self) -> list[str]:
+        """Everything still standing between this target and Phase 18.
+
+        Reported in full rather than first-failure-only: an operator fixing
+        the configuration would otherwise rediscover the next gap one run at
+        a time.
+        """
+        gaps: list[str] = []
+        if not self.owned_test_environment:
+            gaps.append(
+                "the target is not marked as an owned test environment"
+            )
+        if not self.authentication_configured:
+            gaps.append("no authentication is configured for the target")
+        if self.usable_accounts == 0:
+            gaps.append("no enabled test account has resolvable credentials")
+        elif self.distinct_roles < 2:
+            gaps.append(
+                "only one role is configured, and comparing two identities needs two"
+            )
+        return gaps
+
+
+def authorization_probes_placeholder(
+    readiness: AuthorizationReadiness | None = None,
+) -> ComponentResult:
     """Authorization probing is architecturally present but never executed.
 
-    Testing whether actor A can reach actor B's data requires two sets of
-    credentials the platform was authorised to use. The target registry does
-    not carry authentication configuration yet, so the honest result is a
-    skip with the reason recorded - not an invented pass, and not a failure.
+    Testing whether actor A can reach actor B's data needs two authorised
+    identities and permission to use them. Phase 12 gave the registry
+    somewhere to record both; no engine acts on them yet, so this still
+    skips - an invented pass would be the worst possible answer here.
+
+    What Phase 12 changes is the honesty of the reason. Previously every
+    target got the same sentence whether it had no accounts, no
+    authentication or no authorisation. Now the skip names what is actually
+    missing, and a fully configured target is told that the engine itself is
+    what has not arrived rather than being left looking misconfigured.
     """
+    readiness = readiness or AuthorizationReadiness()
+    gaps = readiness.missing()
+
+    if gaps:
+        detail = (
+            "No authenticated probing was attempted: "
+            + "; ".join(gaps)
+            + ". Authorization testing arrives in a later phase."
+        )
+    else:
+        detail = (
+            "The target is configured for authenticated testing "
+            f"({readiness.usable_accounts} usable account(s) across "
+            f"{readiness.distinct_roles} role(s)), but the authorization engine "
+            "is not implemented yet, so nothing was attempted."
+        )
+
     return ComponentResult(
         name=AUTHZ_COMPONENT_NAME,
         status=ComponentStatus.SKIPPED,
-        detail=(
-            "No authorized authentication configuration is registered for this target, "
-            "so no authenticated probing was attempted."
-        ),
+        detail=detail,
+        metadata={
+            "owned_test_environment": readiness.owned_test_environment,
+            "authentication_configured": readiness.authentication_configured,
+            "usable_accounts": readiness.usable_accounts,
+            "distinct_roles": readiness.distinct_roles,
+        },
     )

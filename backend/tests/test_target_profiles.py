@@ -35,11 +35,13 @@ pytestmark = pytest.mark.integration
 
 FORM_AUTH = {
     "enabled": True,
-    "method": "form",
+    "method": "form_login",
     "login_url": "http://localhost:3000/login",
     "username_field": "login-email",
     "password_field": "login-password",
+    "cookie_name": None,
     "token_location": "local_storage",
+    "notes": "",
 }
 
 
@@ -243,6 +245,7 @@ def test_moving_a_target_to_production_refuses_the_capabilities_it_holds(
         cleanup,
         payload(
             environment="staging",
+            owned_test_environment=True,
             security_policy={
                 "authorized_for_testing": True,
                 "allow_state_changing_requests": True,
@@ -293,7 +296,7 @@ def test_authenticated_testing_requires_configured_authentication(
 
 def test_a_form_login_needs_its_fields(client, payload) -> None:
     response = client.post(
-        "/targets", json=payload(authentication={"enabled": True, "method": "form"})
+        "/targets", json=payload(authentication={"enabled": True, "method": "form_login"})
     )
     assert response.status_code == 422, response.text
     for field in ("login_url", "username_field", "password_field"):
@@ -302,7 +305,7 @@ def test_a_form_login_needs_its_fields(client, payload) -> None:
 
 def test_disabled_authentication_cannot_name_a_method(client, payload) -> None:
     response = client.post(
-        "/targets", json=payload(authentication={"enabled": False, "method": "form"})
+        "/targets", json=payload(authentication={"enabled": False, "method": "form_login"})
     )
     assert response.status_code == 422, response.text
 
@@ -318,9 +321,15 @@ def test_a_bearer_profile_needs_no_form_fields(client, cleanup, payload) -> None
     created = _create(
         client,
         cleanup,
-        payload(authentication={"enabled": True, "method": "bearer", "token_location": "header"}),
+        payload(
+            authentication={
+                "enabled": True,
+                "method": "bearer_token",
+                "token_location": "header",
+            }
+        ),
     )
-    assert created["authentication"]["method"] == "bearer"
+    assert created["authentication"]["method"] == "bearer_token"
     assert created["authentication"]["login_url"] is None
 
 

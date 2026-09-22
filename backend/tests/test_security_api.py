@@ -87,9 +87,11 @@ class RecordingEngine:
         api_url: str | None,
         source_path: str | None,
         config: Any,
+        authorization_readiness: Any = None,
     ) -> SecurityRunOutcome:
         self.calls.append(
             {
+                "authorization_readiness": authorization_readiness,
                 "base_url": base_url,
                 "api_url": api_url,
                 "source_path": source_path,

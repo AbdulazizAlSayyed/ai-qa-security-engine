@@ -39,12 +39,15 @@ interface FormState {
   enabled: boolean;
   environment: Environment;
   ownership_status: OwnershipStatus;
+  owned_test_environment: boolean;
   auth_enabled: boolean;
   auth_method: AuthMethod;
   login_url: string;
   username_field: string;
   password_field: string;
+  cookie_name: string;
   token_location: TokenLocation;
+  auth_notes: string;
   authorized_for_testing: boolean;
   allow_security_scanning: boolean;
   allow_authenticated_testing: boolean;
@@ -64,12 +67,15 @@ function initialState(target?: Target): FormState {
     enabled: target?.enabled ?? true,
     environment: target?.environment ?? "local",
     ownership_status: target?.ownership_status ?? "unknown",
+    owned_test_environment: target?.owned_test_environment ?? false,
     auth_enabled: auth.enabled,
     auth_method: auth.method,
     login_url: auth.login_url ?? "",
     username_field: auth.username_field ?? "",
     password_field: auth.password_field ?? "",
+    cookie_name: auth.cookie_name ?? "",
     token_location: auth.token_location,
+    auth_notes: auth.notes ?? "",
     authorized_for_testing: policy.authorized_for_testing,
     allow_security_scanning: policy.allow_security_scanning,
     allow_authenticated_testing: policy.allow_authenticated_testing,
@@ -160,13 +166,30 @@ export default function TargetForm({ target, onSubmit, onCancel }: TargetFormPro
     setValues((current) => ({
       ...current,
       auth_enabled: value,
-      auth_method: value ? (current.auth_method === "none" ? "form" : current.auth_method) : "none",
+      auth_method: value
+        ? current.auth_method === "none"
+          ? "form_login"
+          : current.auth_method
+        : "none",
       allow_authenticated_testing: value && current.allow_authenticated_testing,
     }));
   }
 
+  /**
+   * Withdrawing the owned-test-environment declaration withdraws the one
+   * capability it gates, so the form cannot show a state the server rejects.
+   */
+  function setOwnedTestEnvironment(value: boolean) {
+    setValues((current) => ({
+      ...current,
+      owned_test_environment: value,
+      allow_state_changing_requests: value && current.allow_state_changing_requests,
+    }));
+  }
+
   const isProduction = values.environment === "production";
-  const isFormLogin = values.auth_enabled && values.auth_method === "form";
+  const isFormLogin = values.auth_enabled && values.auth_method === "form_login";
+  const isCookieAuth = values.auth_enabled && values.auth_method === "cookie";
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -184,13 +207,16 @@ export default function TargetForm({ target, onSubmit, onCancel }: TargetFormPro
         enabled: values.enabled,
         environment: values.environment,
         ownership_status: values.ownership_status,
+        owned_test_environment: values.owned_test_environment,
         authentication: {
           enabled: values.auth_enabled,
           method: values.auth_enabled ? values.auth_method : "none",
           login_url: values.auth_enabled ? orNull(values.login_url) : null,
           username_field: values.auth_enabled ? orNull(values.username_field) : null,
           password_field: values.auth_enabled ? orNull(values.password_field) : null,
+          cookie_name: values.auth_enabled ? orNull(values.cookie_name) : null,
           token_location: values.auth_enabled ? values.token_location : "none",
+          notes: values.auth_enabled ? values.auth_notes.trim() : "",
         },
         security_policy: {
           authorized_for_testing: values.authorized_for_testing,
@@ -358,6 +384,19 @@ export default function TargetForm({ target, onSubmit, onCancel }: TargetFormPro
             <p className={hintClass}>How this platform comes to be pointed at it.</p>
           </div>
         </div>
+
+        <div className="mt-4 border-t border-slate-800 pt-4">
+          <Checkbox
+            checked={values.owned_test_environment}
+            onChange={setOwnedTestEnvironment}
+          >
+            <span className="font-medium text-slate-200">Owned test environment</span>
+            <span className="block text-xs text-slate-500">
+              I declare this application is my own test environment. Required before a
+              later phase may send state-changing requests. It enables nothing today.
+            </span>
+          </Checkbox>
+        </div>
       </section>
 
       <section className={sectionClass}>
@@ -429,6 +468,24 @@ export default function TargetForm({ target, onSubmit, onCancel }: TargetFormPro
                 />
               </div>
 
+              {isCookieAuth ? (
+                <div>
+                  <label className={labelClass} htmlFor="target-cookie-name">
+                    Cookie name <span className="text-rose-400">*</span>
+                  </label>
+                  <input
+                    id="target-cookie-name"
+                    className={`${fieldClass} mt-1 font-mono`}
+                    value={values.cookie_name}
+                    onChange={(event) => set("cookie_name", event.target.value)}
+                    placeholder="session"
+                  />
+                  <p className={hintClass}>
+                    The cookie's name &mdash; never its value.
+                  </p>
+                </div>
+              ) : null}
+
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
                   <label className={labelClass} htmlFor="target-username-field">
@@ -461,6 +518,21 @@ export default function TargetForm({ target, onSubmit, onCancel }: TargetFormPro
                     The input's name or test id &mdash; never a password.
                   </p>
                 </div>
+              </div>
+
+              <div>
+                <label className={labelClass} htmlFor="target-auth-notes">
+                  Notes
+                </label>
+                <textarea
+                  id="target-auth-notes"
+                  className={`${fieldClass} mt-1 min-h-16 resize-y`}
+                  value={values.auth_notes}
+                  onChange={(event) => set("auth_notes", event.target.value)}
+                  maxLength={1000}
+                  placeholder="Anything a later phase would need to know about signing in."
+                />
+                <p className={hintClass}>Never put a credential here.</p>
               </div>
             </>
           ) : null}
@@ -516,13 +588,21 @@ export default function TargetForm({ target, onSubmit, onCancel }: TargetFormPro
 
             <Checkbox
               checked={values.allow_state_changing_requests}
-              disabled={!values.authorized_for_testing || isProduction}
+              disabled={
+                !values.authorized_for_testing ||
+                isProduction ||
+                !values.owned_test_environment
+              }
               onChange={(value) => set("allow_state_changing_requests", value)}
             >
               Allow state-changing requests
               {isProduction ? (
                 <span className="block text-xs text-amber-300/80">
                   Not available for production.
+                </span>
+              ) : !values.owned_test_environment ? (
+                <span className="block text-xs text-slate-500">
+                  Needs the owned-test-environment declaration above.
                 </span>
               ) : null}
             </Checkbox>

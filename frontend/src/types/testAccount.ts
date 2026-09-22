@@ -7,23 +7,23 @@
  * API, the browser, or MongoDB.
  */
 
-export const ACCOUNT_ROLES = [
+/**
+ * Suggestions offered in the UI, not a constraint. A role is whatever the
+ * target's own application calls it, so the backend accepts any label and
+ * nothing here matches on the list.
+ */
+export const ROLE_SUGGESTIONS = [
   "admin",
   "user",
+  "manager",
+  "customer",
   "readonly",
+  "guest",
   "anonymous",
-  "custom",
 ] as const;
 
-export type AccountRole = (typeof ACCOUNT_ROLES)[number];
-
-export const ACCOUNT_ROLE_LABELS: Record<AccountRole, string> = {
-  admin: "Admin",
-  user: "User",
-  readonly: "Read-only",
-  anonymous: "Anonymous",
-  custom: "Custom",
-};
+/** Free text, validated as a label by the backend. */
+export type AccountRole = string;
 
 /**
  * Suggestions for the purpose field, offered in the UI as a datalist. The
@@ -37,6 +37,20 @@ export const PURPOSE_SUGGESTIONS = [
   "authorization_test_user",
 ] as const;
 
+/**
+ * Environment variable NAMES. Never values — the browser is never given a
+ * place to hold one, and the API never sends one.
+ */
+export interface CredentialReference {
+  username_env: string | null;
+  password_env: string | null;
+}
+
+export const EMPTY_CREDENTIAL_REFERENCE: CredentialReference = {
+  username_env: null,
+  password_env: null,
+};
+
 export interface TestAccount {
   id: string;
   target_id: string;
@@ -44,9 +58,8 @@ export interface TestAccount {
   role: AccountRole;
   purpose: string;
   username: string | null;
-  /** The env var's name, never its value. */
-  credential_reference: string | null;
-  /** Whether that env var is currently set on the server. Never the value. */
+  credential_reference: CredentialReference;
+  /** Whether every named env var is currently set on the server. Never a value. */
   credential_available: boolean;
   description: string;
   enabled: boolean;
@@ -60,7 +73,7 @@ export interface TestAccountCreate {
   role: AccountRole;
   purpose: string;
   username: string | null;
-  credential_reference: string | null;
+  credential_reference: CredentialReference;
   description: string;
   enabled: boolean;
 }

@@ -46,9 +46,9 @@ export const OWNERSHIP_STATUS_LABELS: Record<OwnershipStatus, string> = {
 
 export const AUTH_METHODS = [
   "none",
-  "form",
+  "form_login",
   "basic",
-  "bearer",
+  "bearer_token",
   "cookie",
   "custom",
 ] as const;
@@ -57,9 +57,9 @@ export type AuthMethod = (typeof AUTH_METHODS)[number];
 
 export const AUTH_METHOD_LABELS: Record<AuthMethod, string> = {
   none: "None",
-  form: "Login form",
+  form_login: "Login form",
   basic: "HTTP Basic",
-  bearer: "Bearer token",
+  bearer_token: "Bearer token",
   cookie: "Session cookie",
   custom: "Custom",
 };
@@ -93,7 +93,9 @@ export interface AuthenticationProfile {
   login_url: string | null;
   username_field: string | null;
   password_field: string | null;
+  cookie_name: string | null;
   token_location: TokenLocation;
+  notes: string;
 }
 
 /**
@@ -119,6 +121,7 @@ export interface Target {
   enabled: boolean;
   environment: Environment;
   ownership_status: OwnershipStatus;
+  owned_test_environment: boolean;
   authentication: AuthenticationProfile;
   security_policy: SecurityPolicy;
   created_at: string;
@@ -136,6 +139,7 @@ export interface TargetCreate {
   enabled: boolean;
   environment: Environment;
   ownership_status: OwnershipStatus;
+  owned_test_environment: boolean;
   authentication: AuthenticationProfile;
   security_policy: SecurityPolicy;
 }
@@ -154,7 +158,9 @@ export const EMPTY_AUTHENTICATION: AuthenticationProfile = {
   login_url: null,
   username_field: null,
   password_field: null,
+  cookie_name: null,
   token_location: "none",
+  notes: "",
 };
 
 export const EMPTY_SECURITY_POLICY: SecurityPolicy = {

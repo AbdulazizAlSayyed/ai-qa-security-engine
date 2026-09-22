@@ -93,6 +93,11 @@ export default function TargetDetails({
             {OWNERSHIP_STATUS_LABELS[target.ownership_status]}
           </span>
         </Row>
+        <Row label="Owned test environment">
+          <StatusPill tone={target.owned_test_environment ? "positive" : "neutral"}>
+            {target.owned_test_environment ? "Declared" : "Not declared"}
+          </StatusPill>
+        </Row>
         <Row label="Base URL">
           <Link value={target.base_url} />
         </Row>
@@ -117,6 +122,16 @@ export default function TargetDetails({
               {auth.username_field || auth.password_field ? (
                 <span className="font-mono text-xs text-slate-400">
                   {auth.username_field ?? "?"} / {auth.password_field ?? "?"}
+                </span>
+              ) : null}
+              {auth.cookie_name ? (
+                <span className="font-mono text-xs text-slate-400">
+                  cookie: {auth.cookie_name}
+                </span>
+              ) : null}
+              {auth.notes ? (
+                <span className="text-xs whitespace-pre-wrap text-slate-400">
+                  {auth.notes}
                 </span>
               ) : null}
               <span className="text-xs text-slate-500">

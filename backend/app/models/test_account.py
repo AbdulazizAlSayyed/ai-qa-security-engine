@@ -1,4 +1,4 @@
-"""Persistence layer for the ``test_accounts`` collection.
+﻿"""Persistence layer for the ``test_accounts`` collection.
 
 A *test account* is an identity a future phase is authorised to use against
 one specific target: an admin, an ordinary user, a second user whose data
@@ -19,7 +19,7 @@ rules live in ``app.services.test_account_service``.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from enum import Enum
+
 from typing import Any
 
 from pymongo import ASCENDING, DESCENDING
@@ -33,34 +33,42 @@ COLLECTION_NAME = "test_accounts"
 UNIQUE_INDEX_NAME = "uniq_test_account_identity"
 UNIQUE_INDEX_KEYS = [("target_id", ASCENDING), ("name", ASCENDING)]
 
+#: The same username twice on one target is two records for one identity,
+#: which makes an authorization question ambiguous before it is asked.
+#: Partial, because an anonymous account legitimately has no username and
+#: several of those must be able to coexist.
+UNIQUE_USERNAME_INDEX_NAME = "uniq_test_account_username"
+UNIQUE_USERNAME_INDEX_KEYS = [("target_id", ASCENDING), ("username", ASCENDING)]
+
 #: Accounts are always listed within one target, so the lookup index leads
 #: with ``target_id``.
 TARGET_INDEX_NAME = "test_accounts_by_target"
 TARGET_INDEX_KEYS = [("target_id", ASCENDING), ("created_at", DESCENDING)]
 
+#: "Which identities may actually be used against this target" is the
+#: question a later phase asks, so it gets its own index.
+ENABLED_INDEX_NAME = "test_accounts_by_target_enabled"
+ENABLED_INDEX_KEYS = [("target_id", ASCENDING), ("enabled", ASCENDING)]
+
 #: Newest first, ``_id`` breaking ties, as the target registry does.
 LIST_SORT = [("created_at", DESCENDING), ("_id", DESCENDING)]
 
+#: The role an account is given when none is supplied.
+DEFAULT_ROLE = "user"
 
-class AccountRole(str, Enum):
-    """What kind of identity this is.
+#: Role names that describe an unauthenticated visitor. Such an account has
+#: no username and no credential, and saying so is the whole content of the
+#: record.
+#:
+#: Roles are otherwise free text: an application's roles are its own, and a
+#: closed vocabulary here would either exclude real ones (manager, customer,
+#: reviewer) or grow into a taxonomy this platform has no business owning.
+#: Nothing matches on a role in this phase.
+ANONYMOUS_ROLES = frozenset({"anonymous"})
 
-    Metadata describing the account, not an authorization rule. Nothing in
-    this phase grants or checks anything based on it; Phase 18 will use the
-    distinction between two roles to ask whether the target keeps them
-    apart.
-    """
-
-    ADMIN = "admin"
-    USER = "user"
-    READONLY = "readonly"
-    ANONYMOUS = "anonymous"
-    CUSTOM = "custom"
-
-
-#: Roles that describe an unauthenticated visitor. They have no username and
-#: no credential, and saying so is the whole content of the record.
-ANONYMOUS_ROLES = frozenset({AccountRole.ANONYMOUS})
+#: Offered by the UI as suggestions only. Not a constraint, and no engine
+#: reads this list.
+COMMON_ROLES = ("admin", "user", "manager", "customer", "readonly", "guest", "anonymous")
 
 
 def get_collection(db: AsyncDatabase) -> AsyncCollection:
@@ -74,7 +82,16 @@ async def ensure_indexes(db: AsyncDatabase) -> None:
     await collection.create_index(
         UNIQUE_INDEX_KEYS, unique=True, name=UNIQUE_INDEX_NAME
     )
+    # Partial: only documents that actually carry a username take part, so
+    # any number of anonymous accounts (which have none) can coexist.
+    await collection.create_index(
+        UNIQUE_USERNAME_INDEX_KEYS,
+        unique=True,
+        name=UNIQUE_USERNAME_INDEX_NAME,
+        partialFilterExpression={"username": {"$type": "string"}},
+    )
     await collection.create_index(TARGET_INDEX_KEYS, name=TARGET_INDEX_NAME)
+    await collection.create_index(ENABLED_INDEX_KEYS, name=ENABLED_INDEX_NAME)
 
 
 def document_to_response(document: Mapping[str, Any]) -> dict[str, Any]:

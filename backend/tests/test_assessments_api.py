@@ -125,7 +125,9 @@ class FakeSecurityEngine:
         self.outcome, self.exc = outcome, exc
         self.calls: list[str] = []
 
-    def __call__(self, *, base_url: str, api_url, source_path, config) -> SecurityRunOutcome:
+    def __call__(
+        self, *, base_url: str, api_url, source_path, config, authorization_readiness=None
+    ) -> SecurityRunOutcome:
         self.calls.append(base_url)
         if self.exc:
             raise self.exc

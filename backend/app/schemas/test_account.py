@@ -26,19 +26,25 @@ from pydantic import (
     model_validator,
 )
 
-from app.models.test_account import ANONYMOUS_ROLES, AccountRole
+from app.models.test_account import ANONYMOUS_ROLES, DEFAULT_ROLE
 
 MAX_NAME_LENGTH = 120
 MAX_USERNAME_LENGTH = 200
 MAX_PURPOSE_LENGTH = 120
 MAX_DESCRIPTION_LENGTH = 2000
 MAX_CREDENTIAL_REFERENCE_LENGTH = 100
+MAX_ROLE_LENGTH = 60
 
 #: An environment variable name: leading letter, then upper-case letters,
 #: digits and underscores. Deliberately narrow. A password, a token or a
 #: connection string will not match it, so a caller who mistakes this field
 #: for "the password" is told so instead of storing one.
 CREDENTIAL_REFERENCE_PATTERN = re.compile(r"^[A-Z][A-Z0-9_]*$")
+
+#: A role name: letters, digits, underscore and hyphen. Open on purpose -
+#: an application's roles are its own, and this platform has no business
+#: owning a taxonomy of them. The pattern only keeps the value a label.
+ROLE_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
 
 #: Spellings that mean a credential was pasted into a free-text field.
 _CREDENTIAL_MARKERS = ("password=", "password:", "passwd=", "secret=", "token=")
@@ -75,6 +81,23 @@ def validate_credential_reference(value: Any) -> Any:
     return cleaned
 
 
+def validate_role(value: Any) -> Any:
+    """A role is a label the target's own application defines."""
+    if value is None:
+        return DEFAULT_ROLE
+    if not isinstance(value, str):
+        raise ValueError("role must be a name, e.g. 'admin' or 'manager'.")
+    cleaned = value.strip()
+    if not cleaned:
+        raise ValueError("role must not be empty.")
+    if not ROLE_PATTERN.match(cleaned):
+        raise ValueError(
+            "role must start with a letter and contain only letters, digits, "
+            "underscores or hyphens, e.g. 'admin', 'manager', 'read-only'."
+        )
+    return cleaned
+
+
 def reject_credentials_in_text(value: str | None, field_name: str) -> str | None:
     """Keep free text free of credentials.
 
@@ -94,6 +117,46 @@ def reject_credentials_in_text(value: str | None, field_name: str) -> str | None
     return value
 
 
+class CredentialReference(BaseModel):
+    """Where this account's credentials live - never what they are.
+
+    Two environment variable *names*. The operator sets the values in the
+    environment of the machine running the backend; this record says which
+    names to look under, and :class:`~app.engines.security.credentials.
+    CredentialResolver` is the only thing that ever reads them.
+
+    ``username_env`` is optional because a username is not a secret and is
+    usually simpler to record directly on the account. When it is set, it
+    wins: an account whose username also comes from the environment can be
+    rotated without touching the database.
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    username_env: str | None = Field(
+        default=None,
+        max_length=MAX_CREDENTIAL_REFERENCE_LENGTH,
+        description="NAME of the env var holding the username, if it comes from there.",
+        examples=["AIQASE_TEST_USER_ADMIN"],
+    )
+    password_env: str | None = Field(
+        default=None,
+        max_length=MAX_CREDENTIAL_REFERENCE_LENGTH,
+        description="NAME of the env var holding the password. Never the password.",
+        examples=["AIQASE_TEST_PASSWORD_ADMIN"],
+    )
+
+    @field_validator("username_env", "password_env", mode="before")
+    @classmethod
+    def _names_only(cls, value: Any) -> Any:
+        return validate_credential_reference(value)
+
+    @property
+    def is_configured(self) -> bool:
+        """Does this reference name anywhere to look for a password?"""
+        return bool(self.password_env)
+
+
 class TestAccountBase(BaseModel):
     """Fields a client may supply when describing a test account."""
 
@@ -105,9 +168,14 @@ class TestAccountBase(BaseModel):
         description="Human-readable name, unique within the target.",
         examples=["Admin test account"],
     )
-    role: AccountRole = Field(
-        default=AccountRole.USER,
-        description="What kind of identity this is. Metadata, not an authorization rule.",
+    role: str = Field(
+        default=DEFAULT_ROLE,
+        max_length=MAX_ROLE_LENGTH,
+        description=(
+            "The role this identity has in the target's own application - any name "
+            "that application uses. Metadata, not an authorization rule."
+        ),
+        examples=["admin", "manager", "customer"],
     )
     purpose: str = Field(
         default="",
@@ -121,14 +189,12 @@ class TestAccountBase(BaseModel):
         description="The identity's username. Never a password.",
         examples=["admin@test.local"],
     )
-    credential_reference: str | None = Field(
-        default=None,
-        max_length=MAX_CREDENTIAL_REFERENCE_LENGTH,
+    credential_reference: CredentialReference = Field(
+        default_factory=CredentialReference,
         description=(
-            "NAME of the environment variable holding this account's password, "
-            "never the password itself."
+            "Environment variable NAMES for this account's credentials. Never the "
+            "credentials themselves."
         ),
-        examples=["E2E_ADMIN_PASSWORD"],
     )
     description: str = Field(
         default="",
@@ -145,10 +211,10 @@ class TestAccountBase(BaseModel):
     def _blank_username_is_absent(cls, value: Any) -> Any:
         return blank_is_absent(value)
 
-    @field_validator("credential_reference", mode="before")
+    @field_validator("role", mode="before")
     @classmethod
-    def _credential_reference_is_a_name(cls, value: Any) -> Any:
-        return validate_credential_reference(value)
+    def _role_is_a_label(cls, value: Any) -> Any:
+        return validate_role(value)
 
     @field_validator("purpose", "description", "name")
     @classmethod
@@ -163,7 +229,10 @@ class TestAccountBase(BaseModel):
         account that is, by definition, not one - and a later phase reading
         this record would have no way to tell which half to believe.
         """
-        if self.role in ANONYMOUS_ROLES and (self.username or self.credential_reference):
+        has_credential = bool(
+            self.credential_reference.username_env or self.credential_reference.password_env
+        )
+        if self.role.lower() in ANONYMOUS_ROLES and (self.username or has_credential):
             raise ValueError(
                 "an anonymous account represents an unauthenticated visitor, so it "
                 "carries neither a username nor a credential_reference."
@@ -191,12 +260,12 @@ class TestAccountUpdate(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     name: str | None = Field(default=None, min_length=1, max_length=MAX_NAME_LENGTH)
-    role: AccountRole | None = None
+    role: str | None = Field(default=None, max_length=MAX_ROLE_LENGTH)
     purpose: str | None = Field(default=None, max_length=MAX_PURPOSE_LENGTH)
     username: str | None = Field(default=None, max_length=MAX_USERNAME_LENGTH)
-    credential_reference: str | None = Field(
-        default=None, max_length=MAX_CREDENTIAL_REFERENCE_LENGTH
-    )
+    #: Replaced whole, like the target's nested blocks, so a half-applied
+    #: reference cannot point a username and a password at different accounts.
+    credential_reference: CredentialReference | None = None
     description: str | None = Field(default=None, max_length=MAX_DESCRIPTION_LENGTH)
     enabled: bool | None = None
 
@@ -205,10 +274,10 @@ class TestAccountUpdate(BaseModel):
     def _blank_username_is_absent(cls, value: Any) -> Any:
         return blank_is_absent(value)
 
-    @field_validator("credential_reference", mode="before")
+    @field_validator("role", mode="before")
     @classmethod
-    def _credential_reference_is_a_name(cls, value: Any) -> Any:
-        return validate_credential_reference(value)
+    def _role_is_a_label(cls, value: Any) -> Any:
+        return validate_role(value) if value is not None else None
 
     @field_validator("purpose", "description", "name")
     @classmethod
@@ -233,15 +302,15 @@ class TestAccountResponse(BaseModel):
     id: str = Field(description="String form of the MongoDB ObjectId.")
     target_id: str
     name: str
-    role: AccountRole
+    role: str
     purpose: str
     username: str | None
-    credential_reference: str | None
+    credential_reference: CredentialReference
     credential_available: bool = Field(
         default=False,
         description=(
-            "Whether credential_reference names an environment variable that is "
-            "currently set. Never the value."
+            "Whether every environment variable this account names is currently set "
+            "on the server. Never the values, and never which one is missing."
         ),
     )
     description: str

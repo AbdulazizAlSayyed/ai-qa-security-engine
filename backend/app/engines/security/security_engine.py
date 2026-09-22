@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.engines.security.api_probes import (
+    AuthorizationReadiness,
     ProbeConfig,
     authorization_probes_placeholder,
     run_api_probes,
@@ -59,6 +60,7 @@ def run_security_assessment(
     api_url: str | None = None,
     source_path: str | None = None,
     config: SecurityEngineConfig | None = None,
+    authorization_readiness: AuthorizationReadiness | None = None,
 ) -> SecurityRunOutcome:
     """Assess one target with every applicable scanner.
 
@@ -100,9 +102,10 @@ def run_security_assessment(
                 )
             )
 
-        # --- Authorization probing: architecture present, never executed
-        #     without authorised credentials.
-        components.append(authorization_probes_placeholder())
+        # --- Authorization probing: architecture present, never executed.
+        #     The readiness summary only shapes the skip reason; no identity
+        #     is used and nothing authenticated is attempted.
+        components.append(authorization_probes_placeholder(authorization_readiness))
 
         # --- Optional static analysis.
         semgrep_result = run_semgrep(source_path, config.semgrep)

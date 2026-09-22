@@ -151,6 +151,7 @@ class TargetService:
                 Environment(merged["environment"]),
                 AuthenticationProfile.model_validate(merged["authentication"]),
                 SecurityPolicy.model_validate(merged["security_policy"]),
+                bool(merged.get("owned_test_environment", False)),
             )
         except (ValueError, TypeError) as exc:
             raise InvalidTargetProfileError(
