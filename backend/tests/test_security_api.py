@@ -498,31 +498,21 @@ def _url_reachable(url: str) -> bool:
 
 @pytest.mark.security
 def test_real_security_scan_against_a_live_registered_target(
-    client: TestClient, run_cleanup, settings
+    client: TestClient, run_cleanup, settings, e2e_web_target
 ) -> None:
     """End-to-end with the real engine, real ZAP and a real target.
 
-    Skips rather than fails when ZAP or the target is not running, so the
-    suite stays green on a machine without the scanner installed.
+    ``e2e_web_target`` (tests/conftest.py) supplies the target and skips when
+    none is reachable. ZAP is checked separately, because a missing scanner
+    and a missing target are different gaps and must be reported as such.
+    This stays a baseline scan - nothing here enables active scanning.
     """
     if not _reachable(settings.zap_host, settings.zap_port):
         pytest.skip(
             f"OWASP ZAP is not running at {settings.zap_host}:{settings.zap_port}"
         )
 
-    targets = client.get("/targets").json()
-    live = [
-        target
-        for target in targets
-        if target["enabled"]
-        and target["type"] in {"web_application", "web_and_api"}
-        and target["base_url"]
-        and _url_reachable(target["base_url"])
-    ]
-    if not live:
-        pytest.skip("no registered, enabled web target is currently reachable")
-
-    target = live[0]
+    target = e2e_web_target
     response = client.post("/security/runs", json={"target_id": target["id"]})
     assert response.status_code == 201, response.text
 

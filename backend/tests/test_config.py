@@ -5,9 +5,20 @@ from __future__ import annotations
 from app.core.config import BACKEND_ROOT, ENV_FILE, PROJECT_ROOT, Settings
 
 
+def test_the_production_database_name_is_unchanged() -> None:
+    """``ai_qa_security`` is the shipped default and must stay that way.
+
+    Read from the model's own default rather than from the loaded settings,
+    so that a suite pointed at a scratch database (``MONGODB_DATABASE=...``)
+    still proves the production default is intact instead of asserting
+    whatever this particular run happens to be using.
+    """
+    assert Settings.model_fields["mongodb_database"].default == "ai_qa_security"
+
+
 def test_defaults_target_the_native_local_stack(settings: Settings) -> None:
     assert settings.mongodb_uri.startswith("mongodb://")
-    assert settings.mongodb_database == "ai_qa_security"
+    assert settings.mongodb_database, "a database name must always be configured"
     assert settings.backend_host == "127.0.0.1"
     assert settings.backend_port == 8000
     assert "5173" in settings.frontend_url

@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.core import database
+from app.core.config import Settings
 
 VITE_ORIGIN = "http://localhost:5173"
 
@@ -36,7 +37,7 @@ def test_liveness_never_touches_the_database(
 
 
 @pytest.mark.integration
-def test_health_reports_a_connected_database(client: TestClient) -> None:
+def test_health_reports_a_connected_database(client: TestClient, settings: Settings) -> None:
     response = client.get("/health")
     assert response.status_code == 200, response.text
 
@@ -47,7 +48,9 @@ def test_health_reports_a_connected_database(client: TestClient) -> None:
 
     db = body["database"]
     assert db["status"] == "connected"
-    assert db["database"] == "ai_qa_security"
+    # The endpoint must report the database it is actually connected to, not
+    # a fixed name. test_config.py is what guards the production default.
+    assert db["database"] == settings.mongodb_database
     assert db["error"] is None
     assert db["latency_ms"] >= 0
     assert db["server_version"]

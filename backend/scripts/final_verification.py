@@ -13,6 +13,18 @@ as done: it only reports whether the database contains a record that such a
 run happened, and records produced by the test-suite fakes (labelled
 ``fake``) never count.
 
+The AI items are judged against whichever provider ``AI_PROVIDER`` selects,
+read from configuration. They report one of:
+
+``NOT CONFIGURED``  the provider is unsupported, or its key/model is unset,
+                    so the platform could not call it at all;
+``CONFIGURED``      it could be called, but no completed run is stored;
+``REAL VERIFIED``   a stored record for *that* provider proves a real call;
+``FAIL``            every stored attempt for that provider failed.
+
+A record counts only when its own ``provider`` field matches the configured
+one, so a Gemini run never passes as an OpenAI verification, or the reverse.
+
 Exit code 1 when an automated check fails; "not verified" items do not
 change the exit code - they are the to-do list for the final pass.
 """
@@ -34,6 +46,7 @@ BACKEND = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND))
 
 from pymongo import AsyncMongoClient  # noqa: E402
+from pymongo.errors import PyMongoError  # noqa: E402
 
 import app.models as models_pkg  # noqa: E402
 from app.core.config import get_settings  # noqa: E402
@@ -49,6 +62,37 @@ MINI_ECOMMERCE = Path(r"C:\Users\RSS\Desktop\mini-ecommerce-demo")
 MINI_ECOMMERCE_HEAD = "c736eca75fd381faa4c2a70d76bbe621aaa5c35c"
 
 PASS, FAIL, NOT_VERIFIED, MANUAL, FOUND = "PASS", "FAIL", "NOT VERIFIED", "MANUAL", "EVIDENCE FOUND"
+#: AI-specific outcomes. "CONFIGURED" means the platform could call the
+#: provider but no real completed run is stored yet; "REAL VERIFIED" means a
+#: stored record proves one happened; "FAILED" means every stored attempt for
+#: the configured provider failed. This script never calls a provider - doing
+#: so would verify the script, not the platform.
+CONFIGURED, REAL_VERIFIED, NOT_CONFIGURED = "CONFIGURED", "REAL VERIFIED", "NOT CONFIGURED"
+
+#: The provider names ``app.api.dependencies.get_ai_provider`` accepts. Any
+#: other value resolves to ``UnconfiguredProvider`` at runtime, so this script
+#: must report it as NOT CONFIGURED rather than assuming a default.
+SUPPORTED_AI_PROVIDERS = ("openai", "gemini")
+
+
+def ai_provider_configuration(settings) -> tuple[str, bool, str]:
+    """(provider name, is it callable, why not).
+
+    Read from configuration only. A provider needs both a key and a model:
+    either one missing makes analysis fail with a configuration error, which
+    is a different thing from "configured but never run".
+    """
+    name = (settings.ai_provider or "").strip().lower()
+    if name not in SUPPORTED_AI_PROVIDERS:
+        return name or "(unset)", False, (
+            f"AI_PROVIDER={settings.ai_provider!r} is not one of {', '.join(SUPPORTED_AI_PROVIDERS)}"
+        )
+    key = getattr(settings, f"{name}_api_key", "") or ""
+    model = getattr(settings, f"{name}_model", "") or ""
+    missing = [label for label, value in ((f"{name.upper()}_API_KEY", key), (f"{name.upper()}_MODEL", model)) if not value.strip()]
+    if missing:
+        return name, False, f"{' and '.join(missing)} not set"
+    return name, True, f"model {model}"
 
 
 def expected_indexes() -> dict[str, set[str]]:
@@ -84,22 +128,65 @@ async def run() -> list[dict[str, Any]]:
         f"{completed} completed assessment(s); {real_qa} non-fake QA run(s), {real_sec} non-fake security run(s). "
         "Confirm in the final pass that one assessment ran against the running Mini E-Commerce with ZAP up.")
 
-    real_ai = await db["ai_analysis_logs"].count_documents({"provider": "openai", "status": "completed"})
-    last_ai = await db["ai_analysis_logs"].find_one({"provider": "openai"}, sort=[("created_at", -1)])
-    add(3, "Real OpenAI analysis", FOUND if real_ai else NOT_VERIFIED,
-        f"{real_ai} completed OpenAI analysis record(s)" + (
-            f"; latest OpenAI attempt: {last_ai.get('status')} ({(last_ai.get('error') or {}).get('category', '-')})" if last_ai else ""))
+    # --- AI: judged against the provider this installation is configured to
+    # use, not against one hardcoded vendor. A record only counts when its
+    # own "provider" field matches, so a Gemini run never passes as an
+    # OpenAI verification, or the other way round.
+    provider, callable_now, provider_detail = ai_provider_configuration(settings)
+    per_provider = {
+        name: {
+            "completed": await db["ai_analysis_logs"].count_documents({"provider": name, "status": "completed"}),
+            "attempts": await db["ai_analysis_logs"].count_documents({"provider": name}),
+        }
+        for name in SUPPORTED_AI_PROVIDERS
+    }
+    others = "; ".join(
+        f"{name}: {counts['completed']}/{counts['attempts']} completed"
+        for name, counts in per_provider.items()
+        if name != provider and counts["attempts"]
+    )
+    configured_completed = per_provider.get(provider, {}).get("completed", 0)
+    configured_attempts = per_provider.get(provider, {}).get("attempts", 0)
+    last_ai = await db["ai_analysis_logs"].find_one({"provider": provider}, sort=[("created_at", -1)])
+    last_detail = (
+        f"; latest {provider} attempt: {last_ai.get('status')} "
+        f"({(last_ai.get('error') or {}).get('category', '-')})" if last_ai else ""
+    )
 
+    if not callable_now:
+        ai_status = NOT_CONFIGURED
+    elif configured_completed:
+        ai_status = REAL_VERIFIED
+    elif configured_attempts:
+        ai_status = FAIL          # every stored attempt for this provider failed
+    else:
+        ai_status = CONFIGURED
+    add(3, f"Real AI analysis (AI_PROVIDER={provider})", ai_status,
+        f"{provider_detail}; {configured_completed} completed of {configured_attempts} attempt(s) for {provider}"
+        + last_detail
+        + (f". Other providers on record - {others}" if others else "")
+        + (". Configured but no real analysis is stored yet." if ai_status == CONFIGURED else ""))
+
+    issue_count = await db["issues"].count_documents({})
     real_corr = await db["assessments"].count_documents({"correlation.status": "completed", "correlation.ai_analysis_id": {"$ne": None}})
-    add(4, "Real correlation", FOUND if await db["issues"].count_documents({}) else NOT_VERIFIED,
-        f"{await db['issues'].count_documents({})} issue(s) stored; {real_corr} correlation(s) used an AI analysis. "
-        "Only counts as real if its AI analysis came from OpenAI (item 3).")
+    add(4, "Real correlation", FOUND if issue_count else NOT_VERIFIED,
+        f"{issue_count} issue(s) stored; {real_corr} correlation(s) used an AI analysis. "
+        "Only counts as real when that analysis is a real one for the configured provider (item 3).")
 
     real_recs = await db["recommendations"].count_documents({})
-    openai_ids = [x["analysis_id"] async for x in db["ai_analysis_logs"].find({"provider": "openai", "status": "completed"}, {"analysis_id": 1})]
-    real_rec_openai = await db["recommendations"].count_documents({"ai_analysis_id": {"$in": openai_ids}}) if openai_ids else 0
-    add(5, "Real recommendation generation", FOUND if real_rec_openai else NOT_VERIFIED,
-        f"{real_recs} recommendation(s) stored, {real_rec_openai} generated from a completed OpenAI analysis.")
+    analysis_ids = [
+        x["analysis_id"]
+        async for x in db["ai_analysis_logs"].find({"provider": provider, "status": "completed"}, {"analysis_id": 1})
+    ]
+    real_rec = await db["recommendations"].count_documents({"ai_analysis_id": {"$in": analysis_ids}}) if analysis_ids else 0
+    if not callable_now:
+        rec_status = NOT_CONFIGURED
+    elif real_rec:
+        rec_status = REAL_VERIFIED
+    else:
+        rec_status = CONFIGURED if configured_completed or not real_recs else NOT_VERIFIED
+    add(5, "Real recommendation generation", rec_status,
+        f"{real_recs} recommendation(s) stored, {real_rec} generated from a completed {provider} analysis.")
 
     for number, engine, field, fake in ((6, "qa", "metadata.browser", "fake"), (7, "security", "engine_metadata.engine_version", "fake")):
         collection = db[f"{engine}_runs"]
@@ -136,7 +223,19 @@ async def run() -> list[dict[str, Any]]:
 
     names = set(await db.list_collection_names())
     extra, missing = sorted(names - EXPECTED_COLLECTIONS), sorted(EXPECTED_COLLECTIONS - names)
+    # Name the server this URI actually reached. "localhost" resolves to both
+    # ::1 and 127.0.0.1, so on a machine where a second MongoDB publishes the
+    # IPv6 address the two are different servers and the client's resolver,
+    # not this configuration, decides which one is used. Recording the
+    # version and host makes that visible instead of silent.
+    try:
+        build = await client.admin.command("buildInfo")
+        status = await client.admin.command("serverStatus")
+        reached = f"reached mongod {build.get('version')} on host {status.get('host')} via {settings.mongodb_uri}"
+    except PyMongoError as exc:  # noqa: BLE001 - reported, never raised
+        reached = f"could not identify the server behind {settings.mongodb_uri}: {type(exc).__name__}"
     add(10, "Independent MongoDB audit (collections)", FAIL if extra else PASS,
+        f"{reached}; database {settings.mongodb_database}; "
         f"unexpected: {extra or 'none'}; not yet created: {missing or 'none'}")
 
     index_problems = []

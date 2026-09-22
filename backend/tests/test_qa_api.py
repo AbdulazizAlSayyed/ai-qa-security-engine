@@ -442,28 +442,19 @@ def _reachable(url: str, timeout: float = 1.5) -> bool:
 
 @pytest.mark.playwright
 def test_real_playwright_run_against_a_live_registered_target(
-    client: TestClient, run_cleanup
+    client: TestClient, run_cleanup, e2e_web_target
 ) -> None:
     """End-to-end with a real browser, using the real engine.
 
-    Skips rather than fails when the registered target is not running, so
-    the suite stays green on a machine where nothing is served locally.
+    ``e2e_web_target`` (tests/conftest.py) supplies the target: an already
+    registered one when there is a reachable one, otherwise one it registers
+    from ``E2E_TARGET_BASE_URL`` and removes again. It skips rather than
+    fails when nothing is served locally, because a machine with no
+    application running cannot answer this question either way.
     """
     pytest.importorskip("playwright", reason="Playwright is not installed")
 
-    targets = client.get("/targets").json()
-    live = [
-        target
-        for target in targets
-        if target["enabled"]
-        and target["type"] in {"web_application", "web_and_api"}
-        and target["base_url"]
-        and _reachable(target["base_url"])
-    ]
-    if not live:
-        pytest.skip("no registered, enabled web target is currently reachable")
-
-    target = live[0]
+    target = e2e_web_target
     response = client.post("/qa/runs", json={"target_id": target["id"]})
     assert response.status_code == 201, response.text
 

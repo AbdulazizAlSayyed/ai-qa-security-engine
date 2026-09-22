@@ -610,26 +610,19 @@ def _reachable(host: str, port: int, timeout: float = 1.5) -> bool:
 @pytest.mark.security
 @pytest.mark.playwright
 def test_real_full_pipeline_against_a_live_target(
-    client: TestClient, db_cleanup, settings
+    client: TestClient, db_cleanup, settings, e2e_web_target
 ) -> None:
-    """The whole thing for real: Playwright, ZAP and a live registered target."""
+    """The whole thing for real: Playwright, ZAP and a live registered target.
+
+    ``e2e_web_target`` (tests/conftest.py) supplies the target and skips when
+    none is reachable; ZAP is checked separately so the two gaps stay
+    distinguishable in the skip reason.
+    """
     pytest.importorskip("playwright", reason="Playwright is not installed")
     if not _reachable(settings.zap_host, settings.zap_port):
         pytest.skip(f"ZAP is not running at {settings.zap_host}:{settings.zap_port}")
 
-    live = []
-    for target in client.get("/targets").json():
-        if not (target["enabled"] and target["base_url"]):
-            continue
-        if target["type"] not in {"web_application", "web_and_api"}:
-            continue
-        parsed = urlparse(target["base_url"])
-        if parsed.hostname and _reachable(parsed.hostname, parsed.port or 80):
-            live.append(target)
-    if not live:
-        pytest.skip("no registered, enabled web target is currently reachable")
-
-    response = start_assessment(client, db_cleanup, live[0]["id"])
+    response = start_assessment(client, db_cleanup, e2e_web_target["id"])
     assert response.status_code == 201, response.text
     body = response.json()
 
