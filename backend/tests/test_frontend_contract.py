@@ -38,6 +38,15 @@ from app.schemas.target import (
     TargetDeleteResponse,
     TargetResponse,
 )
+from app.schemas.requirement import (
+    AcceptanceCriterion,
+    RequirementCandidate,
+    RequirementCreate,
+    RequirementDeleteResponse,
+    RequirementExtractionResponse,
+    RequirementImportResponse,
+    RequirementResponse,
+)
 from app.schemas.test_account import (
     CredentialReference,
     TestAccountCreate,
@@ -194,6 +203,26 @@ def test_test_account_types_match_the_api(interface: str, model) -> None:
     assert interface_fields(source, interface) == set(model.model_fields)
 
 
+@pytest.mark.parametrize(
+    ("interface", "model"),
+    [
+        ("AcceptanceCriterion", AcceptanceCriterion),
+        ("Requirement", RequirementResponse),
+        ("RequirementCreate", RequirementCreate),
+        ("RequirementDeleteResult", RequirementDeleteResponse),
+        ("RequirementCandidate", RequirementCandidate),
+        ("RequirementExtraction", RequirementExtractionResponse),
+        ("RequirementImportResult", RequirementImportResponse),
+    ],
+)
+def test_requirement_types_match_the_api(interface: str, model) -> None:
+    """Phase 13. The candidate and the requirement are deliberately different
+    shapes, and the UI turns one into the other - which only works while both
+    sides agree on what each one holds."""
+    source = (FRONTEND_TYPES / "requirement.ts").read_text(encoding="utf-8")
+    assert interface_fields(source, interface) == set(model.model_fields)
+
+
 def test_no_frontend_type_declares_a_credential_field() -> None:
     """The browser is never given a place to hold a secret.
 
@@ -206,7 +235,7 @@ def test_no_frontend_type_declares_a_credential_field() -> None:
     its token), and those are display strings, not fields carrying a value.
     """
     forbidden = {"password", "secret", "token", "cookie"}
-    for filename in ("target.ts", "testAccount.ts"):
+    for filename in ("target.ts", "testAccount.ts", "requirement.ts"):
         source = (FRONTEND_TYPES / filename).read_text(encoding="utf-8")
         interfaces = re.findall(r"export interface (\w+) \{", source)
         assert interfaces, f"{filename} declares no interfaces"

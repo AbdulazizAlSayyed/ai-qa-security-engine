@@ -28,6 +28,7 @@ from app.api.routes import issues as issue_routes
 from app.api.routes import qa as qa_routes
 from app.api.routes import recommendations as recommendation_routes
 from app.api.routes import reports as report_routes
+from app.api.routes import requirements as requirement_routes
 from app.api.routes import retests as retest_routes
 from app.api.routes import security as security_routes
 from app.api.routes import targets as target_routes
@@ -43,6 +44,7 @@ from app.models.issue import ensure_indexes as ensure_issue_indexes
 from app.models.qa_run import ensure_indexes as ensure_qa_indexes
 from app.models.recommendation import ensure_indexes as ensure_recommendation_indexes
 from app.models.report import ensure_indexes as ensure_report_indexes
+from app.models.requirement import ensure_indexes as ensure_requirement_indexes
 from app.models.retest import ensure_indexes as ensure_retest_indexes
 from app.models.security_run import ensure_indexes as ensure_security_indexes
 from app.models.target import ensure_indexes as ensure_target_indexes
@@ -68,6 +70,13 @@ from app.services.report_service import (
     ReportPersistenceError,
     ReportPreconditionError,
     ReportTraceabilityError,
+)
+from app.services.requirement_service import (
+    InvalidOpenApiDocumentError,
+    InvalidRequirementIdError,
+    RequirementExtractionError,
+    RequirementNotFoundError,
+    RequirementPersistenceError,
 )
 from app.services.retest_service import (
     InvalidRetestReferenceError,
@@ -107,6 +116,7 @@ from app.services.target_service import (
     DuplicateTargetError,
     InvalidTargetIdError,
     InvalidTargetProfileError,
+    TargetHasRequirementsError,
     TargetHasTestAccountsError,
     TargetNotFoundError,
 )
@@ -153,6 +163,7 @@ async def lifespan(app: FastAPI):
         database = get_database()
         await ensure_target_indexes(database)
         await ensure_test_account_indexes(database)
+        await ensure_requirement_indexes(database)
         await ensure_qa_indexes(database)
         await ensure_security_indexes(database)
         await ensure_assessment_indexes(database)
@@ -164,8 +175,9 @@ async def lifespan(app: FastAPI):
         await ensure_retest_indexes(database)
         await ensure_report_indexes(database)
         logger.info(
-            "Target, test account, QA, security, assessment, evidence, AI analysis, "
-            "correlation group, issue, recommendation, retest and report indexes ensured"
+            "Target, test account, requirement, QA, security, assessment, evidence, "
+            "AI analysis, correlation group, issue, recommendation, retest and report "
+            "indexes ensured"
         )
     except PyMongoError as exc:
         logger.warning("Could not ensure indexes (is MongoDB running?): %s", exc)
@@ -197,6 +209,7 @@ app.add_middleware(
 app.include_router(health_routes.router)
 app.include_router(target_routes.router)
 app.include_router(test_account_routes.router)
+app.include_router(requirement_routes.router)
 app.include_router(qa_routes.router)
 app.include_router(security_routes.router)
 app.include_router(assessment_routes.router)
@@ -306,6 +319,46 @@ async def _handle_test_account_not_found(_: Request, exc: TestAccountNotFoundErr
 @app.exception_handler(DuplicateTestAccountError)
 async def _handle_duplicate_test_account(_: Request, exc: DuplicateTestAccountError):
     return _problem(409, str(exc))
+
+
+@app.exception_handler(TargetHasRequirementsError)
+async def _handle_target_has_requirements(_: Request, exc: TargetHasRequirementsError):
+    # Nothing was deleted. Same reasoning as the test account guard: the
+    # registry's state is what forbids it, and saying so is better than
+    # cascading away statements someone wrote.
+    return _problem(409, str(exc))
+
+
+@app.exception_handler(InvalidRequirementIdError)
+async def _handle_invalid_requirement_id(_: Request, exc: InvalidRequirementIdError):
+    return _problem(400, str(exc))
+
+
+@app.exception_handler(RequirementNotFoundError)
+async def _handle_requirement_not_found(_: Request, exc: RequirementNotFoundError):
+    # Also the answer when the requirement exists but belongs to another
+    # target: from this target's perspective it is not there.
+    return _problem(404, str(exc))
+
+
+@app.exception_handler(InvalidOpenApiDocumentError)
+async def _handle_invalid_openapi_document(_: Request, exc: InvalidOpenApiDocumentError):
+    # The request was well formed; the document in it is what cannot be read.
+    return _problem(422, str(exc))
+
+
+@app.exception_handler(RequirementExtractionError)
+async def _handle_requirement_extraction_failed(_: Request, exc: RequirementExtractionError):
+    # Same contract as Phase 5 and Phase 8: 503 when no provider is
+    # configured, 502 when the provider failed or its answer was rejected.
+    # Nothing was written to the registry in either case.
+    return _problem(503 if exc.category == "configuration" else 502, str(exc))
+
+
+@app.exception_handler(RequirementPersistenceError)
+async def _handle_requirement_persistence(_: Request, exc: RequirementPersistenceError):
+    logger.error("Requirement persistence failure: %s", exc)
+    return _problem(500, str(exc))
 
 
 @app.exception_handler(InvalidQaRunIdError)

@@ -17,6 +17,7 @@ from pymongo import ReturnDocument
 from pymongo.asynchronous.database import AsyncDatabase
 from pymongo.errors import DuplicateKeyError
 
+from app.models import requirement as requirement_model
 from app.models import test_account as test_account_model
 from app.models.target import (
     LIST_SORT,
@@ -54,6 +55,10 @@ class DuplicateTargetError(TargetServiceError):
 
 class TargetHasTestAccountsError(TargetServiceError):
     """The target still has test accounts, so it was not deleted."""
+
+
+class TargetHasRequirementsError(TargetServiceError):
+    """The target still has requirements, so it was not deleted."""
 
 
 class InvalidTargetProfileError(TargetServiceError):
@@ -179,10 +184,11 @@ class TargetService:
     async def delete(self, target_id: str) -> None:
         """Remove a target.
 
-        Refuses while test accounts still reference it. Cascading would
-        delete identities the operator configured without ever saying so,
-        and orphaning them would leave records pointing at a target that no
-        longer exists. Being told what is in the way is better than either.
+        Refuses while test accounts or requirements still reference it.
+        Cascading would delete identities the operator configured, and
+        statements someone wrote down, without ever saying so; orphaning
+        them would leave records pointing at a target that no longer exists.
+        Being told what is in the way is better than either.
         """
         object_id = _to_object_id(target_id)
 
@@ -192,6 +198,15 @@ class TargetService:
         if accounts:
             raise TargetHasTestAccountsError(
                 f"Target {target_id} still has {accounts} test account(s). "
+                "Delete them first, or keep the target and disable it instead."
+            )
+
+        requirements = await requirement_model.get_collection(self._db).count_documents(
+            {"target_id": target_id}
+        )
+        if requirements:
+            raise TargetHasRequirementsError(
+                f"Target {target_id} still has {requirements} requirement(s). "
                 "Delete them first, or keep the target and disable it instead."
             )
 

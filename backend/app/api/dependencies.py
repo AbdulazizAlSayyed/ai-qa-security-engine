@@ -25,6 +25,7 @@ from app.services.issue_service import IssueService
 from app.services.qa_service import QaService
 from app.services.recommendation_service import RecommendationService
 from app.services.report_service import ReportService
+from app.services.requirement_service import RequirementService
 from app.services.retest_service import RetestService
 from app.services.security_service import SecurityService
 from app.services.target_service import TargetService
@@ -194,3 +195,20 @@ def get_report_service(db: DatabaseDep, settings: SettingsDep) -> ReportService:
 
 
 ReportServiceDep = Annotated[ReportService, Depends(get_report_service)]
+
+
+def get_requirement_service(
+    db: DatabaseDep, targets: TargetServiceDep, analysis: AIAnalysisServiceDep
+) -> RequirementService:
+    """Provide the requirements registry.
+
+    It reuses ``TargetService`` so an unknown target id behaves identically
+    here and everywhere else, and ``AIAnalysisService`` so candidate
+    extraction goes through the one path to the configured provider rather
+    than opening a second client. CRUD never touches the provider - an
+    unconfigured AI leaves the registry fully usable.
+    """
+    return RequirementService(db=db, targets=targets, analysis=analysis)
+
+
+RequirementServiceDep = Annotated[RequirementService, Depends(get_requirement_service)]
