@@ -21,6 +21,7 @@ from app.services.ai_analysis_service import AIAnalysisService
 from app.services.assessment_service import AssessmentService
 from app.services.correlation_service import CorrelationService
 from app.services.dashboard_service import DashboardService
+from app.services.discovery_service import DiscoveryService
 from app.services.issue_service import IssueService
 from app.services.qa_service import QaService
 from app.services.recommendation_service import RecommendationService
@@ -212,3 +213,23 @@ def get_requirement_service(
 
 
 RequirementServiceDep = Annotated[RequirementService, Depends(get_requirement_service)]
+
+
+def get_discovery_service(
+    db: DatabaseDep,
+    targets: TargetServiceDep,
+    accounts: TestAccountServiceDep,
+    settings: SettingsDep,
+) -> DiscoveryService:
+    """Provide application discovery.
+
+    It reuses ``TargetService`` so an unknown target id behaves identically
+    here and everywhere else, and ``TestAccountService`` so an identity is
+    only ever read through the registry that owns it. The credential
+    resolver is constructed inside the service; no credential passes through
+    this module.
+    """
+    return DiscoveryService(db=db, targets=targets, accounts=accounts, settings=settings)
+
+
+DiscoveryServiceDep = Annotated[DiscoveryService, Depends(get_discovery_service)]

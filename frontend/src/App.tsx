@@ -1,6 +1,7 @@
 import { Route, Routes } from "react-router-dom";
 
 import AppLayout from "@/layouts/AppLayout";
+import ApplicationDiscoveryPage from "@/pages/ApplicationDiscoveryPage";
 import AssessmentDetailPage from "@/pages/AssessmentDetailPage";
 import AssessmentsPage from "@/pages/AssessmentsPage";
 import DashboardPage from "@/pages/DashboardPage";
@@ -14,7 +15,8 @@ import TargetsPage from "@/pages/TargetsPage";
  * Route table.
  *
  * Dashboard (Phase 0, aggregated overview since Phase 7), Targets (Phase 1),
- * Requirements (Phase 13, target-scoped registry), QA (Phase 2), Security
+ * Requirements (Phase 13, target-scoped registry), Application discovery
+ * (Phase 14, browser-driven AppMap), QA (Phase 2), Security
  * (Phase 3) and Assessments (Phase 4; AI analysis and
  * prioritized issues live on the detail page) exist. Findings and Reports arrive with the
  * phases that actually build them - they are shown in the sidebar as
@@ -27,6 +29,7 @@ export default function App() {
         <Route path="/" element={<DashboardPage />} />
         <Route path="/targets" element={<TargetsPage />} />
         <Route path="/requirements" element={<RequirementsPage />} />
+        <Route path="/application-discovery" element={<ApplicationDiscoveryPage />} />
         <Route path="/qa" element={<QaPage />} />
         <Route path="/security" element={<SecurityPage />} />
         <Route path="/assessments" element={<AssessmentsPage />} />

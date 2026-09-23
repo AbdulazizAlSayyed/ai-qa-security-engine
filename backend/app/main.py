@@ -23,6 +23,7 @@ from app.api.routes import ai_analysis as ai_analysis_routes
 from app.api.routes import assessments as assessment_routes
 from app.api.routes import correlation as correlation_routes
 from app.api.routes import dashboard as dashboard_routes
+from app.api.routes import discoveries as discovery_routes
 from app.api.routes import health as health_routes
 from app.api.routes import issues as issue_routes
 from app.api.routes import qa as qa_routes
@@ -37,6 +38,7 @@ from app.core.config import get_settings
 from app.core.database import close_mongo_connection, connect_to_mongo, get_database
 from app.core.logging import configure_logging, get_logger
 from app.models.ai_analysis import ensure_indexes as ensure_ai_analysis_indexes
+from app.models.application_map import ensure_indexes as ensure_application_map_indexes
 from app.models.assessment import ensure_indexes as ensure_assessment_indexes
 from app.models.correlation_group import ensure_indexes as ensure_correlation_group_indexes
 from app.models.evidence import ensure_indexes as ensure_evidence_indexes
@@ -61,6 +63,12 @@ from app.services.correlation_service import (
     CorrelationProcessingError,
 )
 from app.services.dashboard_service import DashboardPersistenceError
+from app.services.discovery_service import (
+    DiscoveryNotFoundError,
+    DiscoveryPersistenceError,
+    InvalidDiscoveryIdError,
+    TargetNotDiscoverableError,
+)
 from app.services.issue_service import InvalidIssueIdError, IssueNotFoundError
 from app.services.report_service import (
     InvalidReportReferenceError,
@@ -164,6 +172,7 @@ async def lifespan(app: FastAPI):
         await ensure_target_indexes(database)
         await ensure_test_account_indexes(database)
         await ensure_requirement_indexes(database)
+        await ensure_application_map_indexes(database)
         await ensure_qa_indexes(database)
         await ensure_security_indexes(database)
         await ensure_assessment_indexes(database)
@@ -175,9 +184,9 @@ async def lifespan(app: FastAPI):
         await ensure_retest_indexes(database)
         await ensure_report_indexes(database)
         logger.info(
-            "Target, test account, requirement, QA, security, assessment, evidence, "
-            "AI analysis, correlation group, issue, recommendation, retest and report "
-            "indexes ensured"
+            "Target, test account, requirement, application map, QA, security, "
+            "assessment, evidence, AI analysis, correlation group, issue, "
+            "recommendation, retest and report indexes ensured"
         )
     except PyMongoError as exc:
         logger.warning("Could not ensure indexes (is MongoDB running?): %s", exc)
@@ -210,6 +219,7 @@ app.include_router(health_routes.router)
 app.include_router(target_routes.router)
 app.include_router(test_account_routes.router)
 app.include_router(requirement_routes.router)
+app.include_router(discovery_routes.router)
 app.include_router(qa_routes.router)
 app.include_router(security_routes.router)
 app.include_router(assessment_routes.router)
@@ -358,6 +368,33 @@ async def _handle_requirement_extraction_failed(_: Request, exc: RequirementExtr
 @app.exception_handler(RequirementPersistenceError)
 async def _handle_requirement_persistence(_: Request, exc: RequirementPersistenceError):
     logger.error("Requirement persistence failure: %s", exc)
+    return _problem(500, str(exc))
+
+
+@app.exception_handler(InvalidDiscoveryIdError)
+async def _handle_invalid_discovery_id(_: Request, exc: InvalidDiscoveryIdError):
+    return _problem(400, str(exc))
+
+
+@app.exception_handler(DiscoveryNotFoundError)
+async def _handle_discovery_not_found(_: Request, exc: DiscoveryNotFoundError):
+    # Also the answer when the run exists on another target: from this
+    # target's perspective it is not there.
+    return _problem(404, str(exc))
+
+
+@app.exception_handler(TargetNotDiscoverableError)
+async def _handle_target_not_discoverable(_: Request, exc: TargetNotDiscoverableError):
+    # The target exists and the request was well formed; the registry's
+    # current state is what forbids the crawl.
+    return _problem(409, str(exc))
+
+
+@app.exception_handler(DiscoveryPersistenceError)
+async def _handle_discovery_persistence(_: Request, exc: DiscoveryPersistenceError):
+    # The crawl really happened; losing it silently would be worse than
+    # telling the caller the platform failed.
+    logger.error("Discovery persistence failure: %s", exc)
     return _problem(500, str(exc))
 
 

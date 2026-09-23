@@ -111,6 +111,20 @@ class Settings(BaseSettings):
     qa_navigation_timeout_ms: int = 15_000
     qa_test_timeout_ms: int = 30_000
 
+    # --- Application discovery (Phase 14) ---------------------------------
+    #: The budget one crawl may spend. Every one of these exists so discovery
+    #: terminates on an application that generates URLs - pagination,
+    #: filters, calendars, infinite routes. Sized for a local target; a
+    #: request may lower any of them but never raise one.
+    discovery_max_pages: int = 40
+    discovery_max_depth: int = 3
+    discovery_max_navigations: int = 120
+    discovery_max_duration_seconds: int = 180
+    #: How long a client-rendered page is given to settle before the DOM is
+    #: read. Bounded, and applied twice per page: a load-state wait and a
+    #: short settle for content a router renders a tick later.
+    discovery_stabilize_ms: int = 600
+
     # --- Security engine -------------------------------------------------
     security_enabled: bool = True
     #: Whole-scan budget handed to each external scanner.

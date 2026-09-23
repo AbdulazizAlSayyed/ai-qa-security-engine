@@ -11,6 +11,7 @@ const NAV: NavItem[] = [
   { label: "Dashboard", to: "/" },
   { label: "Targets", to: "/targets" },
   { label: "Requirements", to: "/requirements" },
+  { label: "Discovery", to: "/application-discovery" },
   { label: "QA Engine", to: "/qa" },
   { label: "Security", to: "/security" },
   { label: "Assessments", to: "/assessments" },
